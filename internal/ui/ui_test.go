@@ -351,18 +351,22 @@ func TestMouseVolumeBarAndWheel(t *testing.T) {
 	w, _ := m.dims()
 	for _, width := range []int{w, 59} {
 		start, end := m.volumeBarBounds(width)
-		line := []rune(ansi.Strip(m.playerTitleLine(width)))
+		rows := strings.Split(m.renderPlayer(width), "\n")
+		if len(rows) < 2 {
+			t.Fatalf("width %d: player has %d rows, want at least 2", width, len(rows))
+		}
+		line := []rune(ansi.Strip(rows[1]))
 		if start < 0 || end > len(line) {
 			t.Fatalf("volume bounds %d..%d outside line of %d runes", start, end, len(line))
 		}
-		want := volumeBar(m.volume, m.volumeBarWidth(width))
+		want := volumeBar(m.volume, m.volumeBarWidth(width-4))
 		if got := string(line[start:end]); got != want {
 			t.Fatalf("width %d: bar at %d..%d is %q, want %q", width, start, end, got, want)
 		}
 	}
 
 	_, _, contentH, _, _, _ := m.layout()
-	y := 1 + contentH
+	y := 1 + contentH + 1
 
 	start, end := m.volumeBarBounds(w)
 	m.Update(tea.MouseMsg{X: end - 1, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
@@ -401,9 +405,10 @@ func TestASCIIControlLayout(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
 	w, _ := m.dims()
-	line := []rune(ansi.Strip(m.playerTitleLine(w)))
+	rows := strings.Split(m.renderPlayer(w), "\n")
+	line := []rune(ansi.Strip(rows[1]))
 	start, end := m.volumeBarBounds(w)
-	if got := string(line[start:end]); got != volumeBar(m.volume, m.volumeBarWidth(w)) {
+	if got := string(line[start:end]); got != volumeBar(m.volume, m.volumeBarWidth(w-4)) {
 		t.Fatalf("ASCII volume bar at %d..%d is %q", start, end, got)
 	}
 	if !strings.Contains(string(line), "SHF") || !strings.Contains(string(line), "RPT") {
@@ -417,30 +422,31 @@ func TestMousePlayerControls(t *testing.T) {
 
 	w, _ := m.dims()
 	_, _, contentH, _, _, _ := m.layout()
-	y := 1 + contentH
+	y := 1 + contentH + 1
+	innerW := w - 4
 
-	layout := m.playerSuffix(w)
-	m.Update(tea.MouseMsg{X: layout.shuffleStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	layout := m.playerSuffix(innerW)
+	m.Update(tea.MouseMsg{X: playerContentX + layout.shuffleStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if !m.shuffle {
 		t.Fatal("clicking the shuffle icon should enable shuffle")
 	}
 
-	layout = m.playerSuffix(w)
-	m.Update(tea.MouseMsg{X: layout.repeatStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	layout = m.playerSuffix(innerW)
+	m.Update(tea.MouseMsg{X: playerContentX + layout.repeatStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.repeat != "all" {
 		t.Fatalf("repeat = %q, want all", m.repeat)
 	}
 
-	layout = m.playerSuffix(w)
-	m.Update(tea.MouseMsg{X: layout.volumeStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	volStart, volEnd := m.volumeBarBounds(w)
+	m.Update(tea.MouseMsg{X: volStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if !m.volDragging {
 		t.Fatal("pressing the slider should start a volume drag")
 	}
-	m.Update(tea.MouseMsg{X: layout.volumeEnd - 1, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m.Update(tea.MouseMsg{X: volEnd - 1, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
 	if m.volume != 100 {
 		t.Fatalf("volume = %d, want 100 while dragging", m.volume)
 	}
-	m.Update(tea.MouseMsg{X: layout.volumeEnd - 1, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+	m.Update(tea.MouseMsg{X: volEnd - 1, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
 	if m.volDragging {
 		t.Fatal("release should stop the volume drag")
 	}
@@ -655,11 +661,13 @@ func TestMouseSeeksProgressBar(t *testing.T) {
 	m.duration = 100 * time.Second
 	m.position = 42 * time.Second
 
+	w, _ := m.dims()
 	_, _, contentH, _, _, _ := m.layout()
-	y := 1 + contentH + 1
-	m.Update(tea.MouseMsg{X: 51, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	if m.position != 50*time.Second {
-		t.Fatalf("position = %v, want 50s", m.position)
+	y := 1 + contentH + 2
+	start, barWidth := m.playerProgressGeometry(w)
+	m.Update(tea.MouseMsg{X: start + barWidth/2, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if m.position < 49*time.Second || m.position > 51*time.Second {
+		t.Fatalf("position = %v, want about 50s", m.position)
 	}
 }
 
@@ -718,6 +726,72 @@ func TestDeleteKeyInSidebarTargetsPlaylist(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyDelete})
 	if m.modal != modalConfirmDeletePlaylist || m.deletePlaylist != "Mix" {
 		t.Fatalf("modal = %v, playlist = %q", m.modal, m.deletePlaylist)
+	}
+}
+
+func TestDeleteInPlaylistRemovesOnlyFromPlaylist(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	if _, err := m.playlists.Create("Mix"); err != nil {
+		t.Fatal(err)
+	}
+	for _, t0 := range m.tracks[:2] {
+		if _, err := m.playlists.Add("Mix", t0.Path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.view = "Mix"
+	m.focus = focusTracks
+	m.rebuildVisible("")
+	m.cursor = 0
+
+	m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	if m.modal != modalConfirmRemoveFromPlaylist {
+		t.Fatalf("modal = %v, want remove-from-playlist confirmation", m.modal)
+	}
+	if len(m.deleteTracks) != 1 {
+		t.Fatalf("deleteTracks = %d, want 1", len(m.deleteTracks))
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if m.modal != modalNone {
+		t.Fatalf("modal = %v, want closed", m.modal)
+	}
+	pl, ok := m.playlists.Get("Mix")
+	if !ok {
+		t.Fatal("playlist disappeared")
+	}
+	if len(pl.Tracks) != 1 {
+		t.Fatalf("playlist has %d tracks, want 1", len(pl.Tracks))
+	}
+	if len(m.tracks) != 3 {
+		t.Fatalf("library has %d tracks, want 3", len(m.tracks))
+	}
+}
+
+func TestRemoveFromPlaylistCanSwitchToDiskDelete(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	if _, err := m.playlists.Create("Mix"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.playlists.Add("Mix", m.tracks[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	m.view = "Mix"
+	m.focus = focusTracks
+	m.rebuildVisible("")
+	m.cursor = 0
+
+	m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if m.modal != modalConfirmDeleteTrack {
+		t.Fatalf("modal = %v, want disk delete confirmation", m.modal)
+	}
+	if len(m.deleteTracks) != 1 {
+		t.Fatalf("deleteTracks = %d, want 1", len(m.deleteTracks))
 	}
 }
 

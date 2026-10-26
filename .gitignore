@@ -4,6 +4,7 @@
 /xngxltuiplayer
 /tuiplay
 *.exe
+*.exe~
 
 # Portable library and user data
 /music/

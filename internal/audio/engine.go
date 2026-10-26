@@ -4,7 +4,6 @@ package audio
 import (
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -46,18 +45,40 @@ type Event struct {
 	Err  error
 }
 
-// Engine owns the speaker and at most one decoded track at a time.
+// trackStream is one decoded track with its own fade, volume and pause
+// controls. The speaker mixes several of these streams during a crossfade.
+type trackStream struct {
+	base     beep.StreamSeekCloser
+	counter  *countingStreamer
+	tap      *spectrumTap
+	fade     *fadeStreamer
+	ctrl     *beep.Ctrl
+	vol      *effects.Volume
+	path     string
+	gen      uint64
+	duration time.Duration
+
+	announce  atomic.Bool
+	closeOnce sync.Once
+	closed    atomic.Bool
+}
+
+func (t *trackStream) close() {
+	t.closeOnce.Do(func() {
+		t.closed.Store(true)
+		_ = t.base.Close()
+	})
+}
+
+// Engine owns the speaker and the currently mixed tracks.
 type Engine struct {
 	mu       sync.Mutex
 	initErr  error
 	initOnce bool
 	volume   float64
 
-	ctrl     *beep.Ctrl
-	volNode  *effects.Volume
-	counter  *countingStreamer
-	tap      *spectrumTap
-	closer   io.Closer
+	tracks   []*trackStream
+	active   *trackStream
 	path     string
 	duration time.Duration
 	offset   time.Duration
@@ -105,9 +126,100 @@ func (e *Engine) play(path string, duration, start time.Duration, paused bool) e
 		start = 0
 	}
 
-	base, format, err := decodeFile(path)
+	ts, actualStart, err := e.newTrackLocked(path, duration, start, 1)
 	if err != nil {
 		return err
+	}
+
+	e.stopLocked()
+	e.gen++
+	ts.gen = e.gen
+	ts.announce.Store(true)
+	e.tracks = append(e.tracks, ts)
+	e.active = ts
+	e.path = path
+	e.duration = ts.duration
+	e.offset = actualStart
+	e.paused = paused
+	speaker.Play(beep.Seq(ts.ctrl, beep.Callback(func() {
+		e.finishTrack(ts)
+	})))
+	return nil
+}
+
+// CrossfadeTo starts path at start and fades the old track out while the new
+// one fades in. It is safe to call while the old track is still playing.
+func (e *Engine) CrossfadeTo(path string, duration, start, fade time.Duration) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.ensureInitLocked(); err != nil {
+		return fmt.Errorf("audio device: %w", err)
+	}
+	if e.active == nil {
+		return errors.New("nothing is playing")
+	}
+	if fade <= 0 {
+		return errors.New("crossfade duration must be positive")
+	}
+
+	remaining := time.Duration(0)
+	if e.duration > 0 {
+		remaining = e.duration - e.positionLocked()
+	}
+	if remaining <= 0 {
+		return errors.New("track already ended")
+	}
+	if fade > remaining {
+		fade = remaining
+	}
+	if fade < 100*time.Millisecond {
+		return errors.New("too close to track end")
+	}
+
+	ts, actualStart, err := e.newTrackLocked(path, duration, start, 0)
+	if err != nil {
+		return err
+	}
+	fadeSamples := int64(SampleRate.N(fade))
+	if fadeSamples < 1 {
+		ts.close()
+		return errors.New("crossfade is too short")
+	}
+
+	e.gen++
+	ts.gen = e.gen
+	ts.announce.Store(true)
+	ts.fade.fadeTo(1, fadeSamples)
+
+	speaker.Lock()
+	old := e.active
+	old.announce.Store(false)
+	old.fade.fadeTo(0, fadeSamples)
+	speaker.Unlock()
+
+	e.pruneLocked()
+	e.tracks = append(e.tracks, ts)
+	e.active = ts
+	e.path = path
+	e.duration = ts.duration
+	e.offset = actualStart
+	speaker.Play(beep.Seq(ts.ctrl, beep.Callback(func() {
+		e.finishTrack(ts)
+	})))
+	return nil
+}
+
+func (e *Engine) newTrackLocked(path string, duration, start time.Duration, initialGain float64) (*trackStream, time.Duration, error) {
+	if duration > 0 && start >= duration {
+		start = 0
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	base, format, err := decodeFile(path)
+	if err != nil {
+		return nil, start, err
 	}
 	if duration <= 0 && format.SampleRate > 0 {
 		duration = format.SampleRate.D(base.Len())
@@ -128,8 +240,9 @@ func (e *Engine) play(path string, duration, start time.Duration, paused bool) e
 		}
 		if err := base.Seek(startSample); err != nil {
 			_ = base.Close()
-			return fmt.Errorf("seek audio: %w", err)
+			return nil, start, fmt.Errorf("seek audio: %w", err)
 		}
+		start = format.SampleRate.D(startSample)
 	}
 
 	var streamer beep.Streamer = base
@@ -139,57 +252,64 @@ func (e *Engine) play(path string, duration, start time.Duration, paused bool) e
 
 	counter := &countingStreamer{Streamer: streamer}
 	tap := newSpectrumTap(counter, 4096)
-	ctrl := &beep.Ctrl{Streamer: tap, Paused: paused}
-	volNode := &effects.Volume{
-		Streamer: ctrl,
+	fade := &fadeStreamer{Streamer: tap, gain: initialGain}
+	vol := &effects.Volume{
+		Streamer: fade,
 		Base:     2,
 		Volume:   gainToVolume(e.volume),
 		Silent:   e.volume <= 0.001,
 	}
+	ctrl := &beep.Ctrl{Streamer: vol}
 
-	e.stopLocked()
+	return &trackStream{
+		base:     base,
+		counter:  counter,
+		tap:      tap,
+		fade:     fade,
+		ctrl:     ctrl,
+		vol:      vol,
+		path:     path,
+		duration: duration,
+	}, start, nil
+}
 
-	e.gen++
-	gen := e.gen
-	seq := beep.Seq(volNode, beep.Callback(func() {
-		select {
-		case e.events <- Event{Kind: EventDone, Gen: gen, Path: path}:
-		default:
+func (e *Engine) finishTrack(ts *trackStream) {
+	ts.close()
+	if !ts.announce.Load() {
+		return
+	}
+	select {
+	case e.events <- Event{Kind: EventDone, Gen: ts.gen, Path: ts.path}:
+	default:
+	}
+}
+
+func (e *Engine) pruneLocked() {
+	kept := e.tracks[:0]
+	for _, ts := range e.tracks {
+		if ts.closed.Load() && ts != e.active {
+			continue
 		}
-	}))
-
-	speaker.Play(seq)
-
-	e.ctrl = ctrl
-	e.volNode = volNode
-	e.counter = counter
-	e.tap = tap
-	e.closer = base
-	e.path = path
-	e.duration = duration
-	e.offset = start
-	e.paused = paused
-	return nil
+		kept = append(kept, ts)
+	}
+	e.tracks = kept
 }
 
 func (e *Engine) stopLocked() {
 	e.gen++
 	speaker.Clear()
-	if e.closer != nil {
-		_ = e.closer.Close()
+	for _, ts := range e.tracks {
+		ts.close()
 	}
-	e.ctrl = nil
-	e.volNode = nil
-	e.counter = nil
-	e.tap = nil
-	e.closer = nil
+	e.tracks = nil
+	e.active = nil
 	e.path = ""
 	e.duration = 0
 	e.offset = 0
 	e.paused = false
 }
 
-// Stop stops playback and releases the current file.
+// Stop stops playback and releases every active file.
 func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -206,12 +326,14 @@ func (e *Engine) Close() {
 func (e *Engine) TogglePause() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.ctrl == nil {
+	if e.active == nil {
 		return e.paused
 	}
+	e.paused = !e.paused
 	speaker.Lock()
-	e.ctrl.Paused = !e.ctrl.Paused
-	e.paused = e.ctrl.Paused
+	for _, ts := range e.tracks {
+		ts.ctrl.Paused = e.paused
+	}
 	speaker.Unlock()
 	return e.paused
 }
@@ -220,13 +342,11 @@ func (e *Engine) TogglePause() bool {
 func (e *Engine) SetPaused(paused bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.ctrl == nil {
-		e.paused = paused
-		return
-	}
-	speaker.Lock()
-	e.ctrl.Paused = paused
 	e.paused = paused
+	speaker.Lock()
+	for _, ts := range e.tracks {
+		ts.ctrl.Paused = paused
+	}
 	speaker.Unlock()
 }
 
@@ -241,7 +361,7 @@ func (e *Engine) Paused() bool {
 func (e *Engine) Active() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.ctrl != nil
+	return e.active != nil
 }
 
 // Path returns the loaded track path.
@@ -269,10 +389,14 @@ func (e *Engine) Duration() time.Duration {
 func (e *Engine) Position() time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.counter == nil {
+	return e.positionLocked()
+}
+
+func (e *Engine) positionLocked() time.Duration {
+	if e.active == nil {
 		return e.offset
 	}
-	pos := e.offset + SampleRate.D(int(e.counter.n.Load()))
+	pos := e.offset + SampleRate.D(int(e.active.counter.n.Load()))
 	if e.duration > 0 && pos > e.duration {
 		pos = e.duration
 	}
@@ -309,12 +433,11 @@ func (e *Engine) SetVolume(volume float64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.volume = volume
-	if e.volNode == nil {
-		return
-	}
 	speaker.Lock()
-	e.volNode.Volume = gainToVolume(volume)
-	e.volNode.Silent = volume <= 0.001
+	for _, ts := range e.tracks {
+		ts.vol.Volume = gainToVolume(volume)
+		ts.vol.Silent = volume <= 0.001
+	}
 	speaker.Unlock()
 }
 
@@ -328,17 +451,24 @@ func (e *Engine) Volume() float64 {
 // Err returns any streaming error from the current track.
 func (e *Engine) Err() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.tap == nil {
+	tap := (*spectrumTap)(nil)
+	if e.active != nil {
+		tap = e.active.tap
+	}
+	e.mu.Unlock()
+	if tap == nil {
 		return nil
 	}
-	return e.tap.Err()
+	return tap.Err()
 }
 
 // Spectrum returns normalized FFT levels for the requested number of bars.
 func (e *Engine) Spectrum(bars int) []float64 {
 	e.mu.Lock()
-	tap := e.tap
+	tap := (*spectrumTap)(nil)
+	if e.active != nil {
+		tap = e.active.tap
+	}
 	e.mu.Unlock()
 	if tap == nil {
 		return make([]float64, maxInt(bars, 0))
@@ -390,6 +520,52 @@ func decodeFile(path string) (beep.StreamSeekCloser, beep.Format, error) {
 		return nil, beep.Format{}, fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
 	return streamer, format, nil
+}
+
+// fadeStreamer applies a linear gain ramp to a track. A gain ramp is only
+// active during a crossfade; normal tracks keep gain 1.
+type fadeStreamer struct {
+	beep.Streamer
+	gain      float64
+	from      float64
+	to        float64
+	remaining int64
+	total     int64
+}
+
+func (f *fadeStreamer) fadeTo(target float64, samples int64) {
+	if samples <= 0 {
+		f.gain = target
+		f.from = target
+		f.to = target
+		f.remaining = 0
+		f.total = 0
+		return
+	}
+	f.from = f.gain
+	f.to = target
+	f.remaining = samples
+	f.total = samples
+}
+
+func (f *fadeStreamer) Stream(samples [][2]float64) (int, bool) {
+	n, ok := f.Streamer.Stream(samples)
+	for i := 0; i < n; i++ {
+		if f.remaining > 0 {
+			f.remaining--
+			progress := 1.0
+			if f.total > 0 {
+				progress = 1 - float64(f.remaining)/float64(f.total)
+			}
+			f.gain = f.from + (f.to-f.from)*progress
+			if f.remaining == 0 {
+				f.gain = f.to
+			}
+		}
+		samples[i][0] *= f.gain
+		samples[i][1] *= f.gain
+	}
+	return n, ok
 }
 
 type countingStreamer struct {

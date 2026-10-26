@@ -186,6 +186,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "D":
 		if m.focus == focusSidebar && m.sidebarCursor > 0 {
 			m.openDeletePlaylist()
+		} else if m.view != "all" {
+			m.openRemoveFromPlaylist()
 		} else {
 			m.openDeleteTrack()
 		}
@@ -193,6 +195,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "delete":
 		if m.focus == focusSidebar && m.sidebarCursor > 0 {
 			m.openDeletePlaylist()
+		} else if m.view != "all" {
+			m.openRemoveFromPlaylist()
 		} else {
 			m.openDeleteTrack()
 		}
@@ -338,6 +342,18 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			return m, m.addPendingToPlaylist()
+		}
+		return m, nil
+
+	case modalConfirmRemoveFromPlaylist:
+		switch key {
+		case "y", "enter":
+			return m, m.removePlaylistTracksNow()
+		case "d":
+			// Keep deleteTracks intact and switch to the destructive dialog.
+			m.modal = modalConfirmDeleteTrack
+		case "n", "esc", "q":
+			m.closeModal()
 		}
 		return m, nil
 

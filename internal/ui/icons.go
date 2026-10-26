@@ -10,6 +10,10 @@ var (
 	iconCover   = "▣"
 	iconTheme   = "◐"
 	iconDelete  = "✕"
+	iconPlay    = "▶"
+	iconPause   = "‖"
+	iconPrev    = "◀◀"
+	iconNext    = "▶▶"
 )
 
 // SetASCIIIcons replaces Unicode symbols with short ASCII labels.
@@ -21,6 +25,10 @@ func SetASCIIIcons(on bool) {
 		iconCover = "[C]"
 		iconTheme = "THM"
 		iconDelete = "DEL"
+		iconPlay = ">"
+		iconPause = "||"
+		iconPrev = "<<"
+		iconNext = ">>"
 		return
 	}
 	iconLogo = "♪"
@@ -29,4 +37,8 @@ func SetASCIIIcons(on bool) {
 	iconCover = "▣"
 	iconTheme = "◐"
 	iconDelete = "✕"
+	iconPlay = "▶"
+	iconPause = "‖"
+	iconPrev = "◀◀"
+	iconNext = "▶▶"
 }

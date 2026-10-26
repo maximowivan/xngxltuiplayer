@@ -346,12 +346,12 @@ func (m *Model) renderRightPane(width, height int) string {
 	if innerH-len(lines) >= 3 {
 		lines = append(lines, "")
 		lines = append(lines, sectionStyle.Render("SPECTRUM")+dimStyle.Render("  live FFT"))
+		// Let the bars use all remaining height and stay glued to the bottom
+		// of the pane instead of leaving a growing gap underneath.
 		rows := innerH - len(lines)
-		if rows > 9 {
-			rows = 9
+		if rows > 0 {
+			lines = append(lines, renderSpectrum(m.spectrum, innerW, rows)...)
 		}
-		spec := renderSpectrum(m.spectrum, innerW, rows)
-		lines = append(lines, spec...)
 	}
 
 	for len(lines) < innerH {
@@ -437,7 +437,7 @@ func (m *Model) renderCover(w, h int) string {
 	}
 	titleLine := iconStyle.Render(icon) + " " + titleStyle.Render(truncateText(title, maxInt(10, w-6)))
 	lines = append(lines, centerLine(titleLine, w))
-	lines = append(lines, m.playerProgressLine(w))
+	lines = append(lines, m.coverProgressLine(w))
 	lines = append(lines, fitLine(m.renderCoverHints(), w))
 	lines = append(lines, m.renderToastLine(w))
 
@@ -470,40 +470,45 @@ func (m *Model) renderCoverHints() string {
 }
 
 func (m *Model) renderPlayer(w int) string {
+	innerW := maxInt(1, w-4)
+	_, h := m.dims()
+	_, rightW := paneWidths(w)
 	lines := []string{
-		m.playerTitleLine(w),
-		m.playerProgressLine(w),
-		m.playerMetaLine(w),
+		m.playerTitleLine(innerW),
+		m.playerProgressLine(innerW),
+		m.playerTransportLine(innerW),
 	}
-	if _, _, _, _, rightW, _ := m.layout(); rightW == 0 && w >= 54 {
-		specW := maxInt(8, w-4)
+	if h >= 20 {
+		lines = append(lines, m.playerMetaLine(innerW))
+	}
+	if rightW == 0 && w >= 54 && h >= 24 {
+		specW := maxInt(8, innerW-4)
 		spec := renderSpectrum(m.spectrum, specW, 1)
 		line := dimStyle.Render("FFT ")
 		if len(spec) > 0 {
 			line += spec[0]
 		}
-		lines = append(lines, fitLine(line, w))
+		lines = append(lines, fitLine(line, innerW))
 	}
-	return strings.Join(lines, "\n")
+	return renderBox("Player", lines, w, m.playerHeight(), colFaint, colAccent2)
 }
 
-func (m *Model) playerTitleLine(w int) string {
+func (m *Model) playerTitleLine(innerW int) string {
 	icon := "■"
 	iconStyle := faintStyle
-	var left string
-	if m.current == nil {
-		left = dimStyle.Render("Nothing playing")
-	} else {
+	left := dimStyle.Render("Nothing playing")
+	if m.current != nil {
 		if m.loaded && !m.paused && !m.ended {
-			icon = "▶"
+			icon = iconPlay
 		} else if m.paused || m.loaded {
-			icon = "‖"
+			icon = iconPause
 		}
 		iconStyle = accent2Style
 		title := titleStyle.Render(m.current.DisplayTitle())
 		artist := dimStyle.Render(" — " + m.current.DisplayArtist())
-		left = iconStyle.Render(icon) + " " + title + artist
+		left = title + artist
 	}
+	left = iconStyle.Render(icon) + " " + left
 
 	shuffleState := dimStyle.Render("off")
 	if m.shuffle {
@@ -517,23 +522,30 @@ func (m *Model) playerTitleLine(w int) string {
 	if m.volume == 0 {
 		volColor = colRed
 	}
-	barW := m.volumeBarWidth(w)
+	barW := m.volumeBarWidth(innerW)
 	vol := lipgloss.NewStyle().Foreground(volColor).Render(volumeBar(m.volume, barW))
 	volGroup := dimStyle.Render("vol ") + keyStyle.Render("−") + vol + keyStyle.Render("+") +
 		dimStyle.Render(fmt.Sprintf(" %3d%%", m.volume))
 	right := keyStyle.Render(iconShuffle) + " " + shuffleState + faintStyle.Render("  ·  ") +
 		keyStyle.Render(iconRepeat) + " " + repeatState + faintStyle.Render("  ·  ") + volGroup
-	if w < 60 {
+	if innerW < 60 {
 		right = volGroup
 	}
-
-	if m.current == nil {
-		left = iconStyle.Render(icon) + " " + left
-	}
-	return fitLine(padBetween(left, right, w), w)
+	return fitLine(padBetween(left, right, innerW), innerW)
 }
 
-func (m *Model) playerProgressLine(w int) string {
+func (m *Model) playerProgressLine(innerW int) string {
+	start, segW := m.playerCenterSegment(innerW)
+	return m.progressLine(innerW, start, segW)
+}
+
+// coverProgressLine is used by the full-screen cover, where there is no player
+// box and the bar can use the whole terminal width.
+func (m *Model) coverProgressLine(w int) string {
+	return m.progressLine(w, 0, w)
+}
+
+func (m *Model) progressLine(innerW, start, segW int) string {
 	pos := m.currentPosition()
 	dur := m.duration
 	progress := 0.0
@@ -547,32 +559,46 @@ func (m *Model) playerProgressLine(w int) string {
 		progress = 1
 	}
 
-	timeW := 7
-	barW := w - timeW*2 - 4
-	if barW < 8 {
-		barW = 8
+	leftLabel := model.FormatDuration(pos)
+	rightLabel := model.FormatDuration(dur)
+	if m.current == nil {
+		leftLabel = "--:--"
+		rightLabel = "--:--"
+	}
+	timeW := maxInt(7, ansi.StringWidth(rightLabel))
+	if segW < timeW*2+3 {
+		barW := maxInt(1, segW)
+		line := progressBar(progress, barW, m.current != nil && dur > 0)
+		return fitLine(strings.Repeat(" ", maxInt(0, start))+line, innerW)
+	}
+
+	barW := segW - timeW*2 - 2
+	if barW < 1 {
+		barW = 1
 	}
 	bar := progressBar(progress, barW, m.current != nil && dur > 0)
-	left := dimStyle.Render(model.FormatDuration(pos))
-	right := dimStyle.Render(model.FormatDuration(dur))
-	if m.current == nil {
-		left = dimStyle.Render("--:--")
-		right = dimStyle.Render("--:--")
-	}
+	left := dimStyle.Render(fmt.Sprintf("%-*s", timeW, leftLabel))
+	right := dimStyle.Render(fmt.Sprintf("%*s", timeW, rightLabel))
 	line := left + " " + bar + " " + right
-	return fitLine(line, w)
+	if ansi.StringWidth(line) > segW {
+		line = truncateText(line, segW)
+	}
+	if pad := segW - ansi.StringWidth(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return fitLine(strings.Repeat(" ", maxInt(0, start))+line, innerW)
 }
 
-func (m *Model) playerMetaLine(w int) string {
+func (m *Model) playerMetaLine(innerW int) string {
 	var left string
 	if m.current == nil {
 		left = dimStyle.Render(fmt.Sprintf("offline · %d tracks in library", len(m.tracks)))
 	} else {
 		next := m.peekNextTitle()
 		if next != "" {
-			left = dimStyle.Render("next  ") + textStyle.Render(truncateText(next, maxInt(8, w/2)))
+			left = dimStyle.Render("next  ") + textStyle.Render(truncateText(next, maxInt(8, innerW/2)))
 		} else {
-			left = dimStyle.Render("album  ") + textStyle.Render(truncateText(m.current.DisplayAlbum(), maxInt(8, w/2)))
+			left = dimStyle.Render("album  ") + textStyle.Render(truncateText(m.current.DisplayAlbum(), maxInt(8, innerW/2)))
 		}
 	}
 	right := ""
@@ -588,7 +614,88 @@ func (m *Model) playerMetaLine(w int) string {
 	if right == "" {
 		right = fmt.Sprintf("%d tracks", len(m.tracks))
 	}
-	return fitLine(padBetween("  "+left, right+"  ", w), w)
+	return fitLine(padBetween(left, right, innerW), innerW)
+}
+
+// playerCenterSegment returns a centered strip whose length matches the track
+// list. Keeping the same width as the center pane makes the progress bar feel
+// connected to the list, while centering it in the full player keeps the
+// transport visually balanced against the wider now-playing pane.
+func (m *Model) playerCenterSegment(innerW int) (start, width int) {
+	_, _, _, _, _, centerW := m.layout()
+	width = centerW - 4
+	if width < 24 || width > innerW-4 {
+		width = innerW - 8
+	}
+	if width < 8 {
+		width = innerW
+	}
+	start = (innerW - width) / 2
+	if start < 0 {
+		start = 0
+	}
+	return
+}
+
+type transportLayout struct {
+	prevStart, prevEnd int
+	playStart, playEnd int
+	nextStart, nextEnd int
+}
+
+func (m *Model) playerTransportLine(innerW int) string {
+	_, line := m.transportLayout(innerW)
+	return line
+}
+
+func (m *Model) transportLayout(innerW int) (transportLayout, string) {
+	start, segW := m.playerCenterSegment(innerW)
+	prevIcon := iconPrev
+	nextIcon := iconNext
+	playIcon := iconPlay
+	if m.current != nil && m.loaded && !m.paused && !m.ended {
+		playIcon = iconPause
+	}
+
+	gap := 3
+	prevW := ansi.StringWidth(prevIcon)
+	playW := ansi.StringWidth(playIcon)
+	nextW := ansi.StringWidth(nextIcon)
+	total := prevW + gap + playW + gap + nextW
+	center := start + segW/2
+	left := center - total/2
+	if left < start {
+		left = start
+	}
+	if left+total > start+segW {
+		left = start + segW - total
+	}
+	if left < 0 {
+		left = 0
+	}
+	if left+total > innerW {
+		left = maxInt(0, innerW-total)
+	}
+
+	var out transportLayout
+	out.prevStart = left
+	out.prevEnd = left + prevW
+	out.playStart = out.prevEnd + gap
+	out.playEnd = out.playStart + playW
+	out.nextStart = out.playEnd + gap
+	out.nextEnd = out.nextStart + nextW
+
+	prevStyle := keyStyle
+	nextStyle := keyStyle
+	playStyle := accent2Style
+	if m.current == nil {
+		playStyle = faintStyle
+	}
+	line := strings.Repeat(" ", left) +
+		prevStyle.Render(prevIcon) + strings.Repeat(" ", gap) +
+		playStyle.Render(playIcon) + strings.Repeat(" ", gap) +
+		nextStyle.Render(nextIcon)
+	return out, fitLine(line, innerW)
 }
 
 func (m *Model) peekNextTitle() string {
@@ -665,7 +772,8 @@ type playerSuffixLayout struct {
 }
 
 // playerSuffix mirrors the right-aligned controls in playerTitleLine so mouse
-// hit testing stays correct for every width and icon set.
+// hit testing stays correct for every width and icon set. The width is the
+// player's inner width; add playerContentX to get terminal coordinates.
 func (m *Model) playerSuffix(width int) playerSuffixLayout {
 	barW := m.volumeBarWidth(width)
 	pctW := ansi.StringWidth(fmt.Sprintf(" %3d%%", m.volume))
@@ -704,11 +812,60 @@ func (m *Model) playerSuffix(width int) playerSuffixLayout {
 	return out
 }
 
-// volumeBarBounds returns the x range of the volume bar in the player title
-// line.
+// playerContentX is the terminal column where the player box inner content
+// starts (left border + one cell of padding).
+const playerContentX = 2
+
+// volumeBarBounds returns the terminal x range of the volume bar in the player
+// title line.
 func (m *Model) volumeBarBounds(width int) (start, end int) {
-	layout := m.playerSuffix(width)
-	return layout.volumeStart, layout.volumeEnd
+	layout := m.playerSuffix(maxInt(1, width-4))
+	return playerContentX + layout.volumeStart, playerContentX + layout.volumeEnd
+}
+
+// playerProgressGeometry returns the terminal x range of the seek bar.
+func (m *Model) playerProgressGeometry(width int) (start, barWidth int) {
+	innerW := maxInt(1, width-4)
+	segStart, segW := m.playerCenterSegment(innerW)
+	rightLabel := model.FormatDuration(m.duration)
+	timeW := maxInt(7, ansi.StringWidth(rightLabel))
+	if segW < timeW*2+3 {
+		return playerContentX + segStart, maxInt(1, segW)
+	}
+	barWidth = segW - timeW*2 - 2
+	if barWidth < 1 {
+		barWidth = 1
+	}
+	return playerContentX + segStart + timeW + 1, barWidth
+}
+
+// coverProgressGeometry returns the terminal x range of the seek bar in cover
+// mode.
+func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
+	rightLabel := model.FormatDuration(m.duration)
+	timeW := maxInt(7, ansi.StringWidth(rightLabel))
+	if width < timeW*2+3 {
+		return 0, maxInt(1, width)
+	}
+	barWidth = width - timeW*2 - 2
+	if barWidth < 1 {
+		barWidth = 1
+	}
+	return timeW + 1, barWidth
+}
+
+// playerTransportBounds returns the terminal x ranges of the transport
+// controls.
+func (m *Model) playerTransportBounds(width int) transportLayout {
+	innerW := maxInt(1, width-4)
+	layout, _ := m.transportLayout(innerW)
+	layout.prevStart += playerContentX
+	layout.prevEnd += playerContentX
+	layout.playStart += playerContentX
+	layout.playEnd += playerContentX
+	layout.nextStart += playerContentX
+	layout.nextEnd += playerContentX
+	return layout
 }
 
 var volumePartials = []rune("▏▎▍▌▋▊▉")
@@ -856,6 +1013,12 @@ func (m *Model) renderModalHints(w int) string {
 		return hintLine(
 			keyHint("↑↓", "choose"),
 			keyHint("enter", "add"),
+			keyHint("esc", "cancel"),
+		)
+	case modalConfirmRemoveFromPlaylist:
+		return hintLine(
+			keyHint("y / enter", "remove"),
+			keyHint("d", "delete from disk"),
 			keyHint("esc", "cancel"),
 		)
 	case modalConfirmDeleteTrack, modalConfirmDeletePlaylist:

@@ -32,6 +32,46 @@ func TestDecodeWAV(t *testing.T) {
 	}
 }
 
+type constantStreamer struct{}
+
+func (constantStreamer) Stream(samples [][2]float64) (int, bool) {
+	for i := range samples {
+		samples[i] = [2]float64{1, 1}
+	}
+	return len(samples), true
+}
+
+func (constantStreamer) Err() error { return nil }
+
+func TestFadeStreamerRamp(t *testing.T) {
+	const eps = 1e-9
+	buf := make([][2]float64, 4)
+
+	fadeOut := &fadeStreamer{Streamer: constantStreamer{}, gain: 1}
+	fadeOut.fadeTo(0, 4)
+	if _, ok := fadeOut.Stream(buf); !ok {
+		t.Fatal("fade-out stream ended early")
+	}
+	wantOut := []float64{0.75, 0.5, 0.25, 0}
+	for i, want := range wantOut {
+		if math.Abs(buf[i][0]-want) > eps {
+			t.Fatalf("fade-out sample %d = %f, want %f", i, buf[i][0], want)
+		}
+	}
+
+	fadeIn := &fadeStreamer{Streamer: constantStreamer{}, gain: 0}
+	fadeIn.fadeTo(1, 4)
+	if _, ok := fadeIn.Stream(buf); !ok {
+		t.Fatal("fade-in stream ended early")
+	}
+	wantIn := []float64{0.25, 0.5, 0.75, 1}
+	for i, want := range wantIn {
+		if math.Abs(buf[i][1]-want) > eps {
+			t.Fatalf("fade-in sample %d = %f, want %f", i, buf[i][1], want)
+		}
+	}
+}
+
 func TestSpectrumPeaksAtSineFrequency(t *testing.T) {
 	const n = fftSize
 	samples := make([]float64, n)

@@ -24,6 +24,8 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderNewPlaylistModal(w, contentH)
 	case modalAddToPlaylist:
 		return m.renderAddToPlaylistModal(w, contentH)
+	case modalConfirmRemoveFromPlaylist:
+		return m.renderRemoveFromPlaylistModal(w, contentH)
 	case modalConfirmDeleteTrack:
 		return m.renderDeleteTrackModal(w, contentH)
 	case modalConfirmDeletePlaylist:
@@ -159,6 +161,40 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 	return renderBox("Add to playlist", lines, width, height, colAccent, colAccent)
 }
 
+func (m *Model) renderRemoveFromPlaylistModal(w, contentH int) string {
+	width := modalWidth(w)
+	innerW := width - 4
+	count := len(m.deleteTracks)
+	height := modalHeight(contentH, 10+minInt(maxInt(count, 1), 5))
+
+	playlist := m.view
+	if playlist == "" {
+		playlist = "this playlist"
+	}
+	noun := "track"
+	if count > 1 {
+		noun = "tracks"
+	}
+	lines := []string{
+		warningStyle.Render(fmt.Sprintf("Remove %d %s from \"%s\"?", count, noun, truncateText(playlist, maxInt(8, innerW-20)))),
+		"",
+	}
+	shown := minInt(count, 5)
+	for i := 0; i < shown; i++ {
+		lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(m.deleteTracks[i].DisplayTitle(), maxInt(8, innerW-2))))
+	}
+	if count > shown {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more", count-shown)))
+	}
+	lines = append(lines,
+		"",
+		textStyle.Render("Audio files stay on disk and remain in All tracks."),
+		"",
+		dimStyle.Render("y / enter remove · d delete from disk · esc cancel"),
+	)
+	return renderBox("Remove from playlist", lines, width, height, colYellow, colYellow)
+}
+
 func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 	width := modalWidth(w)
 	innerW := width - 4
@@ -262,9 +298,8 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"a", "add music link"},
 		{"P", "new playlist"},
 		{"x", "add selection"},
-		{"X", "remove selection"},
-		{"D", "delete (asks first)"},
-		{"delete", "delete selected"},
+		{"X", "quick remove from playlist"},
+		{"D / delete", "remove or delete (asks first)"},
 		{"d", "downloads"},
 		{"u", "rescan library"},
 		{"c", "full-screen cover"},

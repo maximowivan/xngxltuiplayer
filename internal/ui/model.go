@@ -31,6 +31,8 @@ const (
 	focusSidebar
 )
 
+const crossfadeDuration = 5 * time.Second
+
 type modalKind int
 
 const (
@@ -38,6 +40,7 @@ const (
 	modalAddLink
 	modalNewPlaylist
 	modalAddToPlaylist
+	modalConfirmRemoveFromPlaylist
 	modalConfirmDeleteTrack
 	modalConfirmDeletePlaylist
 	modalHelp
@@ -131,13 +134,14 @@ type Model struct {
 	dragStartX int
 	dragStartY int
 
-	current   *model.Track
-	loaded    bool
-	paused    bool
-	ended     bool
-	position  time.Duration
-	duration  time.Duration
-	engineGen uint64
+	current        *model.Track
+	loaded         bool
+	paused         bool
+	ended          bool
+	position       time.Duration
+	duration       time.Duration
+	engineGen      uint64
+	crossfadeTried bool
 
 	volume   int
 	repeat   string
@@ -300,12 +304,7 @@ func (m *Model) dims() (w, h int) {
 func (m *Model) layout() (w, h, contentH, sidebarW, rightW, centerW int) {
 	w, h = m.dims()
 	sidebarW, rightW = paneWidths(w)
-	playerLines := 3
-	if rightW == 0 && w >= 54 {
-		// Keep a compact one-line visualizer when the right pane is hidden.
-		playerLines = 4
-	}
-	contentH = h - 3 - playerLines
+	contentH = h - 3 - playerHeightFor(w, h, rightW)
 	if contentH < 8 {
 		contentH = 8
 	}
@@ -348,6 +347,24 @@ func paneWidths(w int) (sidebar, right int) {
 	default:
 		return 0, 0
 	}
+}
+
+// playerHeightFor keeps the transport framed at normal sizes and falls back to
+// a compact three-line player in short terminals.
+func playerHeightFor(w, h, rightW int) int {
+	if h < 20 {
+		return 5 // title, progress, transport + borders
+	}
+	if rightW == 0 && w >= 54 && h >= 24 {
+		return 7 // title, progress, transport, meta, compact FFT + borders
+	}
+	return 6 // title, progress, transport, meta + borders
+}
+
+func (m *Model) playerHeight() int {
+	w, h := m.dims()
+	_, rightW := paneWidths(w)
+	return playerHeightFor(w, h, rightW)
 }
 
 func (m *Model) listRows() int {
@@ -637,6 +654,7 @@ func (m *Model) restoreSession() {
 	m.paused = true
 	m.loaded = false
 	m.ended = false
+	m.crossfadeTried = false
 	m.rebuildVisible(t.Path)
 	m.buildQueueFor(t.Path)
 	m.artFor = ""
@@ -690,6 +708,7 @@ func (m *Model) playTrack(t model.Track, start time.Duration, rebuildQueue bool)
 	m.position = start
 	m.duration = t.Duration
 	m.engineGen = m.engine.Gen()
+	m.crossfadeTried = false
 	if rebuildQueue {
 		m.buildQueueFor(t.Path)
 	} else if len(m.queue) == 0 {
@@ -900,6 +919,63 @@ func (m *Model) onTrackEnded() tea.Cmd {
 	return m.playQueueIndex(idx)
 }
 
+// maybeCrossfade starts the next queue entry shortly before the current track
+// ends. The engine overlaps both streams, while the UI switches to the new
+// track as soon as the fade begins.
+func (m *Model) maybeCrossfade() tea.Cmd {
+	if !m.loaded || m.paused || m.ended || m.current == nil || m.duration <= 0 || m.crossfadeTried {
+		return nil
+	}
+	if m.duration <= 2*crossfadeDuration || m.position < 500*time.Millisecond {
+		return nil
+	}
+	remaining := m.duration - m.position
+	if remaining <= 0 || remaining > crossfadeDuration {
+		return nil
+	}
+	m.crossfadeTried = true
+
+	idx := m.nextIndex()
+	if idx < 0 || idx >= len(m.queue) {
+		return nil
+	}
+	next, ok := m.findTrack(m.queue[idx])
+	if !ok {
+		return nil
+	}
+	fade := crossfadeDuration
+	if remaining < fade {
+		fade = remaining
+	}
+	if fade < 500*time.Millisecond {
+		return nil
+	}
+	if next.Duration > 0 && next.Duration < 2*fade {
+		// Avoid starting a track that would be gone before it faded in.
+		return nil
+	}
+	if err := m.engine.CrossfadeTo(next.Path, next.Duration, 0, fade); err != nil {
+		return nil
+	}
+
+	m.queueIndex = idx
+	if m.shuffle && !containsInt(m.shuffleHistory, idx) {
+		m.shuffleHistory = append(m.shuffleHistory, idx)
+	}
+	cp := next
+	m.current = &cp
+	m.loaded = true
+	m.paused = false
+	m.ended = false
+	m.position = 0
+	m.duration = next.Duration
+	m.engineGen = m.engine.Gen()
+	m.crossfadeTried = false
+	m.markDirty()
+	m.syncPresence()
+	return m.beginArt(next.Path)
+}
+
 // seekTo jumps to an absolute position in the current track.
 func (m *Model) seekTo(target time.Duration) {
 	if m.current == nil {
@@ -915,6 +991,7 @@ func (m *Model) seekTo(target time.Duration) {
 		m.position = target
 		m.ended = false
 		m.paused = true
+		m.crossfadeTried = false
 		m.markDirty()
 		m.syncPresence()
 		return
@@ -926,6 +1003,8 @@ func (m *Model) seekTo(target time.Duration) {
 	m.position = m.engine.Position()
 	m.paused = m.engine.Paused()
 	m.ended = false
+	m.engineGen = m.engine.Gen()
+	m.crossfadeTried = false
 	m.markDirty()
 	m.syncPresence()
 }
@@ -945,6 +1024,7 @@ func (m *Model) seek(delta time.Duration) {
 		m.position = target
 		m.ended = false
 		m.paused = true
+		m.crossfadeTried = false
 		m.markDirty()
 		m.syncPresence()
 		return
@@ -956,6 +1036,8 @@ func (m *Model) seek(delta time.Duration) {
 	m.position = m.engine.Position()
 	m.paused = m.engine.Paused()
 	m.ended = false
+	m.engineGen = m.engine.Gen()
+	m.crossfadeTried = false
 	m.markDirty()
 	m.syncPresence()
 }
@@ -1042,6 +1124,58 @@ func (m *Model) removeFromPlaylist() {
 	m.rebuildVisible("")
 	m.setToast(fmt.Sprintf("Removed %d %s from %s", removed, noun, m.view), toastInfo, 2*time.Second)
 	m.markDirty()
+}
+
+// openRemoveFromPlaylist asks before removing tracks from the current
+// playlist. The audio files stay on disk; the confirmation also offers a disk
+// delete for users who really want to remove the files.
+func (m *Model) openRemoveFromPlaylist() {
+	if m.view == "all" {
+		m.openDeleteTrack()
+		return
+	}
+	tracks := m.selectionTracks()
+	if len(tracks) == 0 {
+		if t, ok := m.selectedTrack(); ok {
+			tracks = []model.Track{t}
+		}
+	}
+	if len(tracks) == 0 {
+		m.setToast("Select a track first", toastInfo, 2*time.Second)
+		return
+	}
+	m.deleteTracks = tracks
+	m.modal = modalConfirmRemoveFromPlaylist
+}
+
+func (m *Model) removePlaylistTracksNow() tea.Cmd {
+	tracks := append([]model.Track(nil), m.deleteTracks...)
+	if len(tracks) == 0 || m.view == "all" {
+		m.closeModal()
+		return nil
+	}
+	paths := make([]string, 0, len(tracks))
+	for _, t := range tracks {
+		paths = append(paths, t.Path)
+	}
+	removed, err := m.playlists.RemoveMany(m.view, paths)
+	if err != nil {
+		m.setToast("Could not update playlist: "+err.Error(), toastError, 4*time.Second)
+		m.closeModal()
+		return nil
+	}
+	m.closeModal()
+	if removed == 0 {
+		return nil
+	}
+	m.rebuildVisible("")
+	noun := "track"
+	if removed > 1 {
+		noun = "tracks"
+	}
+	m.setToast(fmt.Sprintf("Removed %d %s from %s · files kept", removed, noun, m.view), toastSuccess, 3*time.Second)
+	m.markDirty()
+	return nil
 }
 
 func (m *Model) deleteTrackNow() tea.Cmd {
@@ -1553,6 +1687,9 @@ func (m *Model) handleTick() tea.Cmd {
 				}
 			}
 		}
+	}
+	if cmd := m.maybeCrossfade(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
 	bars := m.spectrumBarCount()

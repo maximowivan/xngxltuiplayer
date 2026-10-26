@@ -5,8 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-
-	"tuiplay/internal/model"
 )
 
 // handleMouse maps terminal clicks and wheel events to the visible widgets.
@@ -42,30 +40,48 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	_, _, contentH, sidebarW, rightW, centerW := m.layout()
 	contentTop := 1
 	playerTop := contentTop + contentH
-	if msg.Y == playerTop {
-		layout := m.playerSuffix(w)
+	playerInnerTop := playerTop + 1
+	if msg.Y == playerInnerTop {
+		innerW := maxInt(1, w-4)
+		x := msg.X - playerContentX
+		layout := m.playerSuffix(innerW)
+		volStart, volEnd := m.volumeBarBounds(w)
 		switch {
-		case w >= 60 && msg.X >= layout.shuffleStart && msg.X < layout.shuffleEnd:
+		case x >= 0 && x < ansi.StringWidth(iconPause) && m.current != nil:
+			return m, m.togglePlay()
+		case innerW >= 60 && x >= layout.shuffleStart && x < layout.shuffleEnd:
 			m.toggleShuffle()
 			return m, nil
-		case w >= 60 && msg.X >= layout.repeatStart && msg.X < layout.repeatEnd:
+		case innerW >= 60 && x >= layout.repeatStart && x < layout.repeatEnd:
 			m.cycleRepeat()
 			return m, nil
-		case msg.X >= layout.volumeStart && msg.X < layout.volumeEnd:
+		case msg.X >= volStart && msg.X < volEnd:
 			m.volDragging = true
 			m.setVolumeFromX(msg.X, w)
 			return m, nil
-		case msg.X == layout.volumeStart-1:
+		case msg.X == volStart-1:
 			m.setVolume(m.volume - 5)
 			return m, nil
-		case msg.X == layout.volumeEnd:
+		case msg.X == volEnd:
 			m.setVolume(m.volume + 5)
 			return m, nil
 		}
 		return m, nil
 	}
-	if msg.Y == playerTop+1 {
+	if msg.Y == playerInnerTop+1 {
 		m.seekFromProgressBar(msg.X, w)
+		return m, nil
+	}
+	if msg.Y == playerInnerTop+2 {
+		transport := m.playerTransportBounds(w)
+		switch {
+		case msg.X >= transport.prevStart && msg.X < transport.prevEnd:
+			return m, m.prevTrack()
+		case msg.X >= transport.playStart && msg.X < transport.playEnd:
+			return m, m.togglePlay()
+		case msg.X >= transport.nextStart && msg.X < transport.nextEnd:
+			return m, m.nextTrack()
+		}
 		return m, nil
 	}
 	if msg.Y < contentTop || msg.Y >= contentTop+contentH {
@@ -106,10 +122,9 @@ func (m *Model) handleWheel(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	_, _, contentH, sidebarW, _, centerW := m.layout()
-	contentTop := 1
-	playerTop := contentTop + contentH
-	if msg.Y == playerTop {
-		// The whole player title line doubles as a volume slider.
+	playerTop := 1 + contentH
+	if msg.Y == playerTop+1 {
+		// The player title line doubles as a volume slider.
 		if up {
 			m.setVolume(m.volume + 5)
 		} else {
@@ -117,7 +132,7 @@ func (m *Model) handleWheel(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if msg.Y < contentTop || msg.Y >= contentTop+contentH {
+	if msg.Y < 1 || msg.Y >= 1+contentH {
 		return m, nil
 	}
 	centerX := 0
@@ -258,7 +273,12 @@ func (m *Model) seekFromProgressBar(x, width int) {
 	if m.current == nil || m.duration <= 0 {
 		return
 	}
-	start, barWidth := m.progressBarGeometry(width)
+	var start, barWidth int
+	if m.coverMode {
+		start, barWidth = m.coverProgressGeometry(width)
+	} else {
+		start, barWidth = m.playerProgressGeometry(width)
+	}
 	if barWidth <= 0 || x < start || x >= start+barWidth {
 		return
 	}
@@ -304,16 +324,6 @@ func (m *Model) handleMouseRelease(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	m.resetDrag()
 	return m, nil
-}
-
-func (m *Model) progressBarGeometry(width int) (start, barWidth int) {
-	timeW := 7
-	barWidth = width - timeW*2 - 4
-	if barWidth < 8 {
-		barWidth = 8
-	}
-	labelW := ansi.StringWidth(model.FormatDuration(m.currentPosition()))
-	return labelW + 1, barWidth
 }
 
 func (m *Model) contentH() int {
