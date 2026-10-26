@@ -532,9 +532,9 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	if m.current != nil && m.loaded && !m.paused && !m.ended {
 		playIcon = iconPauseButton
 	}
-	// Keep a wide button with one cell of padding on each side. The pause
-	// symbol is two full blocks so it stays vertically centered in the cell.
-	playText := " " + centerPad(playIcon, 3) + " "
+	// Keep a button with one cell of padding on each side. The pause symbol is
+	// two thick bars with a narrow gap, so it stays centered and compact.
+	playText := " " + centerPad(playIcon, 2) + " "
 	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
