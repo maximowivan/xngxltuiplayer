@@ -44,25 +44,30 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Y == playerInnerTop {
 		innerW := maxInt(1, w-4)
 		x := msg.X - playerContentX
-		layout := m.playerSuffix(innerW)
-		volStart, volEnd := m.volumeBarBounds(w)
+		layout := m.playerTitleLayout(innerW)
 		switch {
 		case x >= 0 && x < ansi.StringWidth(iconPause) && m.current != nil:
 			return m, m.togglePlay()
-		case innerW >= 60 && x >= layout.shuffleStart && x < layout.shuffleEnd:
+		case x >= layout.shuffleStart && x < layout.shuffleEnd:
 			m.toggleShuffle()
 			return m, nil
-		case innerW >= 60 && x >= layout.repeatStart && x < layout.repeatEnd:
+		case x >= layout.prevStart && x < layout.prevEnd:
+			return m, m.prevTrack()
+		case x >= layout.playStart && x < layout.playEnd:
+			return m, m.togglePlay()
+		case x >= layout.nextStart && x < layout.nextEnd:
+			return m, m.nextTrack()
+		case x >= layout.repeatStart && x < layout.repeatEnd:
 			m.cycleRepeat()
 			return m, nil
-		case msg.X >= volStart && msg.X < volEnd:
+		case layout.volBarStart >= 0 && x >= layout.volBarStart && x < layout.volBarEnd:
 			m.volDragging = true
 			m.setVolumeFromX(msg.X, w)
 			return m, nil
-		case msg.X == volStart-1:
+		case layout.volMinus >= 0 && x == layout.volMinus:
 			m.setVolume(m.volume - 5)
 			return m, nil
-		case msg.X == volEnd:
+		case layout.volPlus >= 0 && x == layout.volPlus:
 			m.setVolume(m.volume + 5)
 			return m, nil
 		}
@@ -70,18 +75,6 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Y == playerInnerTop+1 {
 		m.seekFromProgressBar(msg.X, w)
-		return m, nil
-	}
-	if msg.Y == playerInnerTop+2 {
-		transport := m.playerTransportBounds(w)
-		switch {
-		case msg.X >= transport.prevStart && msg.X < transport.prevEnd:
-			return m, m.prevTrack()
-		case msg.X >= transport.playStart && msg.X < transport.playEnd:
-			return m, m.togglePlay()
-		case msg.X >= transport.nextStart && msg.X < transport.nextEnd:
-			return m, m.nextTrack()
-		}
 		return m, nil
 	}
 	if msg.Y < contentTop || msg.Y >= contentTop+contentH {

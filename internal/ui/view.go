@@ -476,10 +476,6 @@ func (m *Model) renderPlayer(w int) string {
 	lines := []string{
 		m.playerTitleLine(innerW),
 		m.playerProgressLine(innerW),
-		m.playerTransportLine(innerW),
-	}
-	if h >= 20 {
-		lines = append(lines, m.playerMetaLine(innerW))
 	}
 	if rightW == 0 && w >= 54 && h >= 24 {
 		specW := maxInt(8, innerW-4)
@@ -494,9 +490,130 @@ func (m *Model) renderPlayer(w int) string {
 }
 
 func (m *Model) playerTitleLine(innerW int) string {
+	return m.playerTitleLayout(innerW).line
+}
+
+type playerTitleLayout struct {
+	line string
+
+	shuffleStart, shuffleEnd int
+	prevStart, prevEnd       int
+	playStart, playEnd       int
+	nextStart, nextEnd       int
+	repeatStart, repeatEnd   int
+
+	volBarStart, volBarEnd int
+	volMinus, volPlus      int
+}
+
+func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
+	var out playerTitleLayout
+	out.volBarStart, out.volBarEnd = -1, -1
+	out.volMinus, out.volPlus = -1, -1
+	if innerW <= 0 {
+		return out
+	}
+
+	shuffleIcon := iconShuffle
+	shuffleStyle := dimStyle
+	if m.shuffle {
+		shuffleStyle = accent2Style.Bold(true)
+	}
+	repeatIcon := iconRepeat
+	if m.repeat == "one" {
+		repeatIcon += "1"
+	}
+	repeatStyle := dimStyle
+	if m.repeat != "off" {
+		repeatStyle = accent2Style.Bold(true)
+	}
+	playIcon := iconPlay
+	if m.current != nil && m.loaded && !m.paused && !m.ended {
+		playIcon = iconPause
+	}
+	playText := " " + playIcon + " "
+	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
+	if m.current == nil {
+		playStyle = lipgloss.NewStyle().Foreground(colFaint)
+	}
+
+	prevIcon := iconPrev
+	nextIcon := iconNext
+	gap := 2
+	shuffleW := ansi.StringWidth(shuffleIcon)
+	prevW := ansi.StringWidth(prevIcon)
+	playW := ansi.StringWidth(playText)
+	nextW := ansi.StringWidth(nextIcon)
+	repeatW := ansi.StringWidth(repeatIcon)
+	transportW := shuffleW + gap + prevW + gap + playW + gap + nextW + gap + repeatW
+
+	// At extremely narrow widths keep the core transport usable.
+	if transportW > innerW-2 {
+		shuffleIcon, repeatIcon = "", ""
+		shuffleW, repeatW = 0, 0
+		transportW = prevW + gap + playW + gap + nextW
+	}
+	centerStart := (innerW - transportW) / 2
+	if centerStart < 0 {
+		centerStart = 0
+	}
+	centerEnd := centerStart + transportW
+	leftW := centerStart - 1
+	if leftW < 0 {
+		leftW = 0
+	}
+	rightStart := centerEnd + 1
+	rightW := innerW - rightStart
+	if rightW < 0 {
+		rightW = 0
+	}
+
+	x := centerStart
+	out.shuffleStart = x
+	out.shuffleEnd = x + shuffleW
+	x = out.shuffleEnd + gap
+	out.prevStart = x
+	out.prevEnd = x + prevW
+	x = out.prevEnd + gap
+	out.playStart = x
+	out.playEnd = x + playW
+	x = out.playEnd + gap
+	out.nextStart = x
+	out.nextEnd = x + nextW
+	x = out.nextEnd + gap
+	out.repeatStart = x
+	out.repeatEnd = x + repeatW
+
+	transport := shuffleStyle.Render(shuffleIcon) +
+		strings.Repeat(" ", gap) + keyStyle.Render(prevIcon) +
+		strings.Repeat(" ", gap) + playStyle.Render(playText) +
+		strings.Repeat(" ", gap) + keyStyle.Render(nextIcon) +
+		strings.Repeat(" ", gap) + repeatStyle.Render(repeatIcon)
+
+	volStr, barStart, barEnd := m.volumeGroup(rightW)
+	volW := ansi.StringWidth(volStr)
+	if volW > rightW {
+		volStr = ansi.Truncate(volStr, rightW, "")
+		volW = ansi.StringWidth(volStr)
+	}
+	volGroupStart := innerW - volW
+	rightPart := strings.Repeat(" ", maxInt(0, rightW-volW)) + volStr
+	if barStart >= 0 {
+		out.volBarStart = volGroupStart + barStart
+		out.volBarEnd = volGroupStart + barEnd
+		out.volMinus = out.volBarStart - 1
+		out.volPlus = out.volBarEnd
+	}
+
+	line := fitLineEllipsis(m.playerNowText(), leftW) + " " + transport + " " + rightPart
+	out.line = fitLine(line, innerW)
+	return out
+}
+
+func (m *Model) playerNowText() string {
 	icon := "■"
 	iconStyle := faintStyle
-	left := dimStyle.Render("Nothing playing")
+	text := dimStyle.Render("Nothing playing")
 	if m.current != nil {
 		if m.loaded && !m.paused && !m.ended {
 			icon = iconPlay
@@ -504,48 +621,86 @@ func (m *Model) playerTitleLine(innerW int) string {
 			icon = iconPause
 		}
 		iconStyle = accent2Style
-		title := titleStyle.Render(m.current.DisplayTitle())
-		artist := dimStyle.Render(" — " + m.current.DisplayArtist())
-		left = title + artist
+		text = titleStyle.Render(m.current.DisplayTitle()) + dimStyle.Render(" — "+m.current.DisplayArtist())
 	}
-	left = iconStyle.Render(icon) + " " + left
+	return iconStyle.Render(icon) + " " + text
+}
 
-	shuffleState := dimStyle.Render("off")
-	if m.shuffle {
-		shuffleState = accent2Style.Render("on")
+// volumeGroup returns the right-aligned volume widget and the bar offsets
+// relative to the widget start. Negative offsets mean the compact widget has
+// no interactive slider.
+func (m *Model) volumeGroup(width int) (string, int, int) {
+	if width < 4 {
+		return "", -1, -1
 	}
-	repeatState := dimStyle.Render(m.repeat)
-	if m.repeat != "off" {
-		repeatState = accentStyle.Render(m.repeat)
+	if width >= 17 {
+		barW := width - 11
+		if barW > 30 {
+			barW = 30
+		}
+		if barW >= 6 {
+			volColor := colGreen
+			if m.volume == 0 {
+				volColor = colRed
+			}
+			bar := lipgloss.NewStyle().Foreground(volColor).Render(volumeBar(m.volume, barW))
+			group := dimStyle.Render("vol ") + keyStyle.Render("−") + bar + keyStyle.Render("+") +
+				dimStyle.Render(fmt.Sprintf(" %3d%%", m.volume))
+			return group, 5, 5 + barW
+		}
 	}
-	volColor := colGreen
-	if m.volume == 0 {
-		volColor = colRed
+	if width >= 8 {
+		return dimStyle.Render("vol ") + textStyle.Render(fmt.Sprintf("%3d%%", m.volume)), -1, -1
 	}
-	barW := m.volumeBarWidth(innerW)
-	vol := lipgloss.NewStyle().Foreground(volColor).Render(volumeBar(m.volume, barW))
-	volGroup := dimStyle.Render("vol ") + keyStyle.Render("−") + vol + keyStyle.Render("+") +
-		dimStyle.Render(fmt.Sprintf(" %3d%%", m.volume))
-	right := keyStyle.Render(iconShuffle) + " " + shuffleState + faintStyle.Render("  ·  ") +
-		keyStyle.Render(iconRepeat) + " " + repeatState + faintStyle.Render("  ·  ") + volGroup
-	if innerW < 60 {
-		right = volGroup
+	pct := fmt.Sprintf("%d%%", m.volume)
+	if width >= ansi.StringWidth(pct) {
+		return textStyle.Render(pct), -1, -1
 	}
-	return fitLine(padBetween(left, right, innerW), innerW)
+	return "", -1, -1
 }
 
 func (m *Model) playerProgressLine(innerW int) string {
 	start, segW := m.playerCenterSegment(innerW)
-	return m.progressLine(innerW, start, segW)
+	return m.progressLine(innerW, start, segW, m.playerProgressRight(innerW, start+segW))
+}
+
+func (m *Model) playerProgressRight(innerW, segEnd int) string {
+	space := innerW - segEnd
+	if space < 6 {
+		return ""
+	}
+	queue := ""
+	if m.current != nil && len(m.queue) > 0 {
+		queue = fmt.Sprintf("%d/%d", m.queueIndex+1, len(m.queue))
+	}
+	qW := ansi.StringWidth(queue)
+	next := m.peekNextTitle()
+	if next != "" {
+		avail := space - 8 // "next  " plus two cells of breathing room
+		if queue != "" {
+			avail -= qW + 2
+		}
+		if avail >= 4 {
+			right := dimStyle.Render("next  ") + textStyle.Render(ansi.Truncate(next, avail, "…"))
+			if queue != "" {
+				right += faintStyle.Render("  ") + dimStyle.Render(queue)
+			}
+			return right
+		}
+	}
+	if queue != "" && space >= qW+1 {
+		return dimStyle.Render(queue)
+	}
+	return ""
 }
 
 // coverProgressLine is used by the full-screen cover, where there is no player
 // box and the bar can use the whole terminal width.
 func (m *Model) coverProgressLine(w int) string {
-	return m.progressLine(w, 0, w)
+	return m.progressLine(w, 0, w, "")
 }
 
-func (m *Model) progressLine(innerW, start, segW int) string {
+func (m *Model) progressLine(innerW, start, segW int, rightText string) string {
 	pos := m.currentPosition()
 	dur := m.duration
 	progress := 0.0
@@ -566,55 +721,33 @@ func (m *Model) progressLine(innerW, start, segW int) string {
 		rightLabel = "--:--"
 	}
 	timeW := maxInt(7, ansi.StringWidth(rightLabel))
+	var segment string
 	if segW < timeW*2+3 {
 		barW := maxInt(1, segW)
-		line := progressBar(progress, barW, m.current != nil && dur > 0)
-		return fitLine(strings.Repeat(" ", maxInt(0, start))+line, innerW)
-	}
-
-	barW := segW - timeW*2 - 2
-	if barW < 1 {
-		barW = 1
-	}
-	bar := progressBar(progress, barW, m.current != nil && dur > 0)
-	left := dimStyle.Render(fmt.Sprintf("%-*s", timeW, leftLabel))
-	right := dimStyle.Render(fmt.Sprintf("%*s", timeW, rightLabel))
-	line := left + " " + bar + " " + right
-	if ansi.StringWidth(line) > segW {
-		line = truncateText(line, segW)
-	}
-	if pad := segW - ansi.StringWidth(line); pad > 0 {
-		line += strings.Repeat(" ", pad)
-	}
-	return fitLine(strings.Repeat(" ", maxInt(0, start))+line, innerW)
-}
-
-func (m *Model) playerMetaLine(innerW int) string {
-	var left string
-	if m.current == nil {
-		left = dimStyle.Render(fmt.Sprintf("offline · %d tracks in library", len(m.tracks)))
+		segment = progressBar(progress, barW, m.current != nil && dur > 0)
 	} else {
-		next := m.peekNextTitle()
-		if next != "" {
-			left = dimStyle.Render("next  ") + textStyle.Render(truncateText(next, maxInt(8, innerW/2)))
-		} else {
-			left = dimStyle.Render("album  ") + textStyle.Render(truncateText(m.current.DisplayAlbum(), maxInt(8, innerW/2)))
+		barW := segW - timeW*2 - 2
+		if barW < 1 {
+			barW = 1
 		}
+		bar := progressBar(progress, barW, m.current != nil && dur > 0)
+		left := dimStyle.Render(fmt.Sprintf("%-*s", timeW, leftLabel))
+		right := dimStyle.Render(fmt.Sprintf("%*s", timeW, rightLabel))
+		segment = left + " " + bar + " " + right
 	}
-	right := ""
-	if m.current != nil && len(m.queue) > 0 {
-		right = fmt.Sprintf("%d/%d", m.queueIndex+1, len(m.queue))
+	if ansi.StringWidth(segment) > segW {
+		segment = truncateText(segment, segW)
 	}
-	if active := m.mgr.ActiveCount(); active > 0 {
-		if right != "" {
-			right += "  ·  "
-		}
-		right += fmt.Sprintf("↓ %d active", active)
+	if pad := segW - ansi.StringWidth(segment); pad > 0 {
+		segment += strings.Repeat(" ", pad)
 	}
-	if right == "" {
-		right = fmt.Sprintf("%d tracks", len(m.tracks))
+
+	rightW := ansi.StringWidth(rightText)
+	if rightText != "" && innerW-(start+segW) >= rightW+1 {
+		gap := innerW - rightW - (start + segW)
+		return strings.Repeat(" ", maxInt(0, start)) + segment + strings.Repeat(" ", gap) + rightText
 	}
-	return fitLine(padBetween(left, right, innerW), innerW)
+	return fitLine(strings.Repeat(" ", maxInt(0, start))+segment, innerW)
 }
 
 // playerCenterSegment returns a centered strip whose length matches the track
@@ -635,67 +768,6 @@ func (m *Model) playerCenterSegment(innerW int) (start, width int) {
 		start = 0
 	}
 	return
-}
-
-type transportLayout struct {
-	prevStart, prevEnd int
-	playStart, playEnd int
-	nextStart, nextEnd int
-}
-
-func (m *Model) playerTransportLine(innerW int) string {
-	_, line := m.transportLayout(innerW)
-	return line
-}
-
-func (m *Model) transportLayout(innerW int) (transportLayout, string) {
-	start, segW := m.playerCenterSegment(innerW)
-	prevIcon := iconPrev
-	nextIcon := iconNext
-	playIcon := iconPlay
-	if m.current != nil && m.loaded && !m.paused && !m.ended {
-		playIcon = iconPause
-	}
-
-	gap := 3
-	prevW := ansi.StringWidth(prevIcon)
-	playW := ansi.StringWidth(playIcon)
-	nextW := ansi.StringWidth(nextIcon)
-	total := prevW + gap + playW + gap + nextW
-	center := start + segW/2
-	left := center - total/2
-	if left < start {
-		left = start
-	}
-	if left+total > start+segW {
-		left = start + segW - total
-	}
-	if left < 0 {
-		left = 0
-	}
-	if left+total > innerW {
-		left = maxInt(0, innerW-total)
-	}
-
-	var out transportLayout
-	out.prevStart = left
-	out.prevEnd = left + prevW
-	out.playStart = out.prevEnd + gap
-	out.playEnd = out.playStart + playW
-	out.nextStart = out.playEnd + gap
-	out.nextEnd = out.nextStart + nextW
-
-	prevStyle := keyStyle
-	nextStyle := keyStyle
-	playStyle := accent2Style
-	if m.current == nil {
-		playStyle = faintStyle
-	}
-	line := strings.Repeat(" ", left) +
-		prevStyle.Render(prevIcon) + strings.Repeat(" ", gap) +
-		playStyle.Render(playIcon) + strings.Repeat(" ", gap) +
-		nextStyle.Render(nextIcon)
-	return out, fitLine(line, innerW)
 }
 
 func (m *Model) peekNextTitle() string {
@@ -748,79 +820,19 @@ func progressBar(progress float64, width int, enabled bool) string {
 	return b.String()
 }
 
-// volumeBarWidth scales the slider so it feels like a real control instead of
-// a five-step indicator.
-func (m *Model) volumeBarWidth(width int) int {
-	switch {
-	case width >= 120:
-		return 30
-	case width >= 100:
-		return 24
-	case width >= 80:
-		return 16
-	case width >= 60:
-		return 10
-	default:
-		return 8
-	}
-}
-
-type playerSuffixLayout struct {
-	shuffleStart, shuffleEnd int
-	repeatStart, repeatEnd   int
-	volumeStart, volumeEnd   int
-}
-
-// playerSuffix mirrors the right-aligned controls in playerTitleLine so mouse
-// hit testing stays correct for every width and icon set. The width is the
-// player's inner width; add playerContentX to get terminal coordinates.
-func (m *Model) playerSuffix(width int) playerSuffixLayout {
-	barW := m.volumeBarWidth(width)
-	pctW := ansi.StringWidth(fmt.Sprintf(" %3d%%", m.volume))
-	volW := ansi.StringWidth("vol ") + 1 + barW + 1 + pctW
-	volStart := width - volW
-	barStart := volStart + ansi.StringWidth("vol ") + 1
-	var out playerSuffixLayout
-	out.volumeStart = barStart
-	out.volumeEnd = barStart + barW
-	if width < 60 {
-		return out
-	}
-
-	shuffleState := "off"
-	if m.shuffle {
-		shuffleState = "on"
-	}
-	shuffleW := ansi.StringWidth(iconShuffle) + 1 + ansi.StringWidth(shuffleState)
-	repeatW := ansi.StringWidth(iconRepeat) + 1 + ansi.StringWidth(m.repeat)
-	total := shuffleW + 5 + repeatW + 5 + volW
-	start := width - total
-	out.shuffleStart = start
-	out.shuffleEnd = start + shuffleW
-	out.repeatStart = out.shuffleEnd + 5
-	out.repeatEnd = out.repeatStart + repeatW
-
-	if out.volumeStart < 0 {
-		out.volumeStart = 0
-	}
-	if out.volumeEnd > width {
-		out.volumeEnd = width
-	}
-	if out.volumeEnd < out.volumeStart {
-		out.volumeEnd = out.volumeStart
-	}
-	return out
-}
-
 // playerContentX is the terminal column where the player box inner content
 // starts (left border + one cell of padding).
 const playerContentX = 2
 
 // volumeBarBounds returns the terminal x range of the volume bar in the player
-// title line.
+// title line. A negative range means the compact volume widget has no slider.
 func (m *Model) volumeBarBounds(width int) (start, end int) {
-	layout := m.playerSuffix(maxInt(1, width-4))
-	return playerContentX + layout.volumeStart, playerContentX + layout.volumeEnd
+	innerW := maxInt(1, width-4)
+	layout := m.playerTitleLayout(innerW)
+	if layout.volBarStart < 0 {
+		return -1, -1
+	}
+	return playerContentX + layout.volBarStart, playerContentX + layout.volBarEnd
 }
 
 // playerProgressGeometry returns the terminal x range of the seek bar.
@@ -852,20 +864,6 @@ func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
 		barWidth = 1
 	}
 	return timeW + 1, barWidth
-}
-
-// playerTransportBounds returns the terminal x ranges of the transport
-// controls.
-func (m *Model) playerTransportBounds(width int) transportLayout {
-	innerW := maxInt(1, width-4)
-	layout, _ := m.transportLayout(innerW)
-	layout.prevStart += playerContentX
-	layout.prevEnd += playerContentX
-	layout.playStart += playerContentX
-	layout.playEnd += playerContentX
-	layout.nextStart += playerContentX
-	layout.nextEnd += playerContentX
-	return layout
 }
 
 var volumePartials = []rune("▏▎▍▌▋▊▉")
@@ -1077,6 +1075,21 @@ func (m *Model) renderTooSmall(w, h int) string {
 		textStyle.Render("Terminal too small") + "\n" +
 		dimStyle.Render(fmt.Sprintf("%d×%d — need at least 54×16", w, h))
 	return placeBlock(body, w, h)
+}
+
+// fitLineEllipsis pads a line to width and uses an ellipsis when it has to cut
+// styled text.
+func fitLineEllipsis(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) > width {
+		s = ansi.Truncate(s, width, "…")
+	}
+	if gap := width - ansi.StringWidth(s); gap > 0 {
+		s += strings.Repeat(" ", gap)
+	}
+	return s
 }
 
 func padBetween(left, right string, width int) string {

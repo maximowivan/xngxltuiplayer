@@ -135,14 +135,18 @@ func TestViewFrames(t *testing.T) {
 		modalAddLink,
 		modalNewPlaylist,
 		modalAddToPlaylist,
+		modalConfirmRemoveFromPlaylist,
 		modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist,
 		modalHelp,
 		modalDownloads,
 	} {
 		m.modal = modal
-		if modal == modalConfirmDeleteTrack {
+		if modal == modalConfirmDeleteTrack || modal == modalConfirmRemoveFromPlaylist {
 			m.deleteTracks = []model.Track{m.tracks[0]}
+		}
+		if modal == modalConfirmRemoveFromPlaylist {
+			m.view = "Mix"
 		}
 		if modal == modalConfirmDeletePlaylist {
 			m.deletePlaylist = "Mix"
@@ -344,6 +348,40 @@ func TestMouseWheelScrollsTracks(t *testing.T) {
 	}
 }
 
+func TestPlayerTitleLayoutResponsive(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	for _, width := range []int{130, 110, 92, 84, 72, 60, 54} {
+		m.width, m.height = width, 32
+		innerW := width - 4
+		layout := m.playerTitleLayout(innerW)
+		if got := ansi.StringWidth(layout.line); got != innerW {
+			t.Fatalf("width %d: title line = %d cells, want %d", width, got, innerW)
+		}
+		for name, pair := range map[string][2]int{
+			"shuffle": {layout.shuffleStart, layout.shuffleEnd},
+			"prev":    {layout.prevStart, layout.prevEnd},
+			"play":    {layout.playStart, layout.playEnd},
+			"next":    {layout.nextStart, layout.nextEnd},
+			"repeat":  {layout.repeatStart, layout.repeatEnd},
+		} {
+			if pair[0] < 0 || pair[1] > innerW || pair[0] > pair[1] {
+				t.Fatalf("width %d: %s range %v outside inner width %d", width, name, pair, innerW)
+			}
+		}
+		if layout.playEnd > layout.playStart {
+			center := float64(layout.playStart+layout.playEnd) / 2
+			if diff := center - float64(innerW)/2; diff < -1 || diff > 1 {
+				t.Fatalf("width %d: play button center %.1f, want about %.1f", width, center, float64(innerW)/2)
+			}
+		}
+		if layout.volBarStart >= 0 && layout.volBarEnd > innerW {
+			t.Fatalf("width %d: volume bar ends at %d, inner width %d", width, layout.volBarEnd, innerW)
+		}
+	}
+}
+
 func TestMouseVolumeBarAndWheel(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
@@ -359,7 +397,7 @@ func TestMouseVolumeBarAndWheel(t *testing.T) {
 		if start < 0 || end > len(line) {
 			t.Fatalf("volume bounds %d..%d outside line of %d runes", start, end, len(line))
 		}
-		want := volumeBar(m.volume, m.volumeBarWidth(width-4))
+		want := volumeBar(m.volume, end-start)
 		if got := string(line[start:end]); got != want {
 			t.Fatalf("width %d: bar at %d..%d is %q, want %q", width, start, end, got, want)
 		}
@@ -408,7 +446,10 @@ func TestASCIIControlLayout(t *testing.T) {
 	rows := strings.Split(m.renderPlayer(w), "\n")
 	line := []rune(ansi.Strip(rows[1]))
 	start, end := m.volumeBarBounds(w)
-	if got := string(line[start:end]); got != volumeBar(m.volume, m.volumeBarWidth(w-4)) {
+	if start < 0 || end > len(line) {
+		t.Fatalf("ASCII volume bounds %d..%d outside line of %d runes", start, end, len(line))
+	}
+	if got := string(line[start:end]); got != volumeBar(m.volume, end-start) {
 		t.Fatalf("ASCII volume bar at %d..%d is %q", start, end, got)
 	}
 	if !strings.Contains(string(line), "SHF") || !strings.Contains(string(line), "RPT") {
@@ -425,13 +466,13 @@ func TestMousePlayerControls(t *testing.T) {
 	y := 1 + contentH + 1
 	innerW := w - 4
 
-	layout := m.playerSuffix(innerW)
+	layout := m.playerTitleLayout(innerW)
 	m.Update(tea.MouseMsg{X: playerContentX + layout.shuffleStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if !m.shuffle {
 		t.Fatal("clicking the shuffle icon should enable shuffle")
 	}
 
-	layout = m.playerSuffix(innerW)
+	layout = m.playerTitleLayout(innerW)
 	m.Update(tea.MouseMsg{X: playerContentX + layout.repeatStart, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.repeat != "all" {
 		t.Fatalf("repeat = %q, want all", m.repeat)
