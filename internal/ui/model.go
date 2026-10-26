@@ -935,7 +935,12 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 	}
 	m.crossfadeTried = true
 
-	idx := m.nextIndex()
+	idx := -1
+	if m.repeat == "one" {
+		idx = m.queueIndex
+	} else {
+		idx = m.nextIndex()
+	}
 	if idx < 0 || idx >= len(m.queue) {
 		return nil
 	}
