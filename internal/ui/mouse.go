@@ -73,7 +73,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if msg.Y == playerInnerTop+1 {
+	if msg.Y == playerInnerTop+2 {
 		m.seekFromProgressBar(msg.X, w)
 		return m, nil
 	}

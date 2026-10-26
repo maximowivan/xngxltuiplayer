@@ -350,13 +350,14 @@ func paneWidths(w int) (sidebar, right int) {
 }
 
 // playerHeightFor keeps the Spotify-like control bar compact: one row for
-// title/transport/volume, one for progress and queue details. When the right
-// pane is hidden, a compact FFT row is added on tall terminals.
+// title/transport/volume, one for the artist, one for progress and queue
+// details. When the right pane is hidden, a compact FFT row is added on tall
+// terminals.
 func playerHeightFor(w, h, rightW int) int {
 	if rightW == 0 && w >= 54 && h >= 24 {
-		return 5 // title, progress, compact FFT + borders
+		return 6 // title, artist, progress, compact FFT + borders
 	}
-	return 4 // title, progress + borders
+	return 5 // title, artist, progress + borders
 }
 
 func (m *Model) playerHeight() int {

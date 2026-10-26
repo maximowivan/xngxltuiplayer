@@ -704,7 +704,7 @@ func TestMouseSeeksProgressBar(t *testing.T) {
 
 	w, _ := m.dims()
 	_, _, contentH, _, _, _ := m.layout()
-	y := 1 + contentH + 2
+	y := 1 + contentH + 3
 	start, barWidth := m.playerProgressGeometry(w)
 	m.Update(tea.MouseMsg{X: start + barWidth/2, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.position < 49*time.Second || m.position > 51*time.Second {

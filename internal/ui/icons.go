@@ -4,16 +4,17 @@ package ui
 // are widely available. -ascii switches to plain-text labels for terminals or
 // fonts that cannot render them.
 var (
-	iconLogo    = "♪"
-	iconShuffle = "⇄"
-	iconRepeat  = "↻"
-	iconCover   = "▣"
-	iconTheme   = "◐"
-	iconDelete  = "✕"
-	iconPlay    = "▶"
-	iconPause   = "‖"
-	iconPrev    = "◀◀"
-	iconNext    = "▶▶"
+	iconLogo        = "♪"
+	iconShuffle     = "⇄"
+	iconRepeat      = "↻"
+	iconCover       = "▣"
+	iconTheme       = "◐"
+	iconDelete      = "✕"
+	iconPlay        = "▶"
+	iconPause       = "‖"
+	iconPauseButton = "▮ ▮"
+	iconPrev        = "◀◀"
+	iconNext        = "▶▶"
 )
 
 // SetASCIIIcons replaces Unicode symbols with short ASCII labels.
@@ -27,6 +28,7 @@ func SetASCIIIcons(on bool) {
 		iconDelete = "DEL"
 		iconPlay = ">"
 		iconPause = "||"
+		iconPauseButton = "| |"
 		iconPrev = "<<"
 		iconNext = ">>"
 		return
@@ -39,6 +41,7 @@ func SetASCIIIcons(on bool) {
 	iconDelete = "✕"
 	iconPlay = "▶"
 	iconPause = "‖"
+	iconPauseButton = "▮ ▮"
 	iconPrev = "◀◀"
 	iconNext = "▶▶"
 }

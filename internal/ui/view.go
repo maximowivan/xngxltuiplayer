@@ -475,6 +475,7 @@ func (m *Model) renderPlayer(w int) string {
 	_, rightW := paneWidths(w)
 	lines := []string{
 		m.playerTitleLine(innerW),
+		m.playerArtistLine(innerW),
 		m.playerProgressLine(innerW),
 	}
 	if rightW == 0 && w >= 54 && h >= 24 {
@@ -529,9 +530,11 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	}
 	playIcon := iconPlay
 	if m.current != nil && m.loaded && !m.paused && !m.ended {
-		playIcon = iconPause
+		playIcon = iconPauseButton
 	}
-	playText := " " + playIcon + " "
+	// Keep a wide button with one cell of padding on each side. The pause
+	// symbol is two full blocks so it stays vertically centered in the cell.
+	playText := " " + centerPad(playIcon, 3) + " "
 	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
@@ -621,9 +624,16 @@ func (m *Model) playerNowText() string {
 			icon = iconPause
 		}
 		iconStyle = accent2Style
-		text = titleStyle.Render(m.current.DisplayTitle()) + dimStyle.Render(" — "+m.current.DisplayArtist())
+		text = titleStyle.Render(m.current.DisplayTitle())
 	}
 	return iconStyle.Render(icon) + " " + text
+}
+
+func (m *Model) playerArtistLine(innerW int) string {
+	if m.current == nil {
+		return fitLineEllipsis("  "+dimStyle.Render("select a track and press enter"), innerW)
+	}
+	return fitLineEllipsis("  "+dimStyle.Render(m.current.DisplayArtist()), innerW)
 }
 
 // volumeGroup returns the right-aligned volume widget and the bar offsets
@@ -1079,6 +1089,18 @@ func (m *Model) renderTooSmall(w, h int) string {
 
 // fitLineEllipsis pads a line to width and uses an ellipsis when it has to cut
 // styled text.
+func centerPad(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := ansi.StringWidth(s)
+	if w >= width {
+		return ansi.Truncate(s, width, "")
+	}
+	left := (width - w) / 2
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", width-w-left)
+}
+
 func fitLineEllipsis(s string, width int) string {
 	if width <= 0 {
 		return ""
