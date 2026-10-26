@@ -134,6 +134,7 @@ func (e *Engine) play(path string, duration, start time.Duration, paused bool) e
 	e.stopLocked()
 	e.gen++
 	ts.gen = e.gen
+	ts.ctrl.Paused = paused
 	ts.announce.Store(true)
 	e.tracks = append(e.tracks, ts)
 	e.active = ts
@@ -188,6 +189,7 @@ func (e *Engine) CrossfadeTo(path string, duration, start, fade time.Duration) e
 
 	e.gen++
 	ts.gen = e.gen
+	ts.ctrl.Paused = e.paused
 	ts.announce.Store(true)
 	ts.fade.fadeTo(1, fadeSamples)
 
