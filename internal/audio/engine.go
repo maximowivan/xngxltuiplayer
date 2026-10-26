@@ -522,8 +522,16 @@ func decodeFile(path string) (beep.StreamSeekCloser, beep.Format, error) {
 	return streamer, format, nil
 }
 
-// fadeStreamer applies a linear gain ramp to a track. A gain ramp is only
-// active during a crossfade; normal tracks keep gain 1.
+type fadeShape int
+
+const (
+	fadeLinear fadeShape = iota
+	fadeOutEqualPower
+	fadeInEqualPower
+)
+
+// fadeStreamer applies an equal-power gain ramp to a track. A gain ramp is
+// only active during a crossfade; normal tracks keep gain 1.
 type fadeStreamer struct {
 	beep.Streamer
 	gain      float64
@@ -531,6 +539,7 @@ type fadeStreamer struct {
 	to        float64
 	remaining int64
 	total     int64
+	shape     fadeShape
 }
 
 func (f *fadeStreamer) fadeTo(target float64, samples int64) {
@@ -540,12 +549,21 @@ func (f *fadeStreamer) fadeTo(target float64, samples int64) {
 		f.to = target
 		f.remaining = 0
 		f.total = 0
+		f.shape = fadeLinear
 		return
 	}
 	f.from = f.gain
 	f.to = target
 	f.remaining = samples
 	f.total = samples
+	switch {
+	case target < f.gain:
+		f.shape = fadeOutEqualPower
+	case target > f.gain:
+		f.shape = fadeInEqualPower
+	default:
+		f.shape = fadeLinear
+	}
 }
 
 func (f *fadeStreamer) Stream(samples [][2]float64) (int, bool) {
@@ -557,7 +575,14 @@ func (f *fadeStreamer) Stream(samples [][2]float64) (int, bool) {
 			if f.total > 0 {
 				progress = 1 - float64(f.remaining)/float64(f.total)
 			}
-			f.gain = f.from + (f.to-f.from)*progress
+			switch f.shape {
+			case fadeOutEqualPower:
+				f.gain = f.from * math.Cos(progress*math.Pi/2)
+			case fadeInEqualPower:
+				f.gain = f.to * math.Sin(progress*math.Pi/2)
+			default:
+				f.gain = f.from + (f.to-f.from)*progress
+			}
 			if f.remaining == 0 {
 				f.gain = f.to
 			}

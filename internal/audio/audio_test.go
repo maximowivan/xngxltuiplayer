@@ -52,7 +52,12 @@ func TestFadeStreamerRamp(t *testing.T) {
 	if _, ok := fadeOut.Stream(buf); !ok {
 		t.Fatal("fade-out stream ended early")
 	}
-	wantOut := []float64{0.75, 0.5, 0.25, 0}
+	wantOut := []float64{
+		math.Cos(0.25 * math.Pi / 2),
+		math.Cos(0.50 * math.Pi / 2),
+		math.Cos(0.75 * math.Pi / 2),
+		0,
+	}
 	for i, want := range wantOut {
 		if math.Abs(buf[i][0]-want) > eps {
 			t.Fatalf("fade-out sample %d = %f, want %f", i, buf[i][0], want)
@@ -64,7 +69,12 @@ func TestFadeStreamerRamp(t *testing.T) {
 	if _, ok := fadeIn.Stream(buf); !ok {
 		t.Fatal("fade-in stream ended early")
 	}
-	wantIn := []float64{0.25, 0.5, 0.75, 1}
+	wantIn := []float64{
+		math.Sin(0.25 * math.Pi / 2),
+		math.Sin(0.50 * math.Pi / 2),
+		math.Sin(0.75 * math.Pi / 2),
+		1,
+	}
 	for i, want := range wantIn {
 		if math.Abs(buf[i][1]-want) > eps {
 			t.Fatalf("fade-in sample %d = %f, want %f", i, buf[i][1], want)
