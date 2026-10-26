@@ -978,6 +978,9 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 	m.crossfadeTried = false
 	m.markDirty()
 	m.syncPresence()
+	if m.artFor == next.Path && m.artImage != nil {
+		return nil
+	}
 	return m.beginArt(next.Path)
 }
 
