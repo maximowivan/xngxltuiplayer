@@ -536,7 +536,7 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	// The play/pause glyph is a single text cell with no colored background.
 	// Center the glyph itself; the repeat/shuffle controls can make the
 	// surrounding group asymmetric.
-	playIcon := iconPlay
+	playIcon := iconPlayButton
 	if playing {
 		playIcon = iconPauseButton
 	}

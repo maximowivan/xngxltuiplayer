@@ -23,6 +23,33 @@
 enter play · space pause · / search · a add link · P playlist · x add · ? help
 ```
 
+## Скачать готовый билд
+
+Готовые сборки лежат в
+[Releases](https://github.com/maximowivan/xngxltuiplayer/releases).
+
+1. Скачайте `xngxltuiplayer-v0.1.0-windows-amd64.zip` и распакуйте в папку,
+   куда у вас есть запись: Desktop, Downloads, `D:\...`. Не распаковывайте в
+   `C:\Program Files` — рядом с exe создаются `music\` и `data\`.
+2. Запустите `xngxltuiplayer.exe` обычным двойным кликом. Администратор не нужен.
+3. Windows может показать SmartScreen, потому что exe не подписан:
+   `Подробнее` → `Выполнить всё равно`.
+4. Рекомендуется Windows Terminal: он даёт truecolor и поддержку мыши. Если
+   Unicode-иконки не отображаются, запустите `xngxltuiplayer.exe -ascii`.
+5. Для скачивания треков нужны `yt-dlp` и `ffmpeg` в `PATH`. Для прослушивания
+   уже скачанных файлов они не нужны:
+
+```powershell
+winget install yt-dlp.yt-dlp
+winget install Gyan.FFmpeg
+```
+
+6. Проверка окружения: `.\xngxltuiplayer.exe --check`. Версия:
+   `.\xngxltuiplayer.exe --version`.
+
+Музыку можно сразу положить в `music\` или добавить по ссылке клавишей `a`.
+Папки `music\` и `data\` создаются при первом запуске.
+
 ## Возможности
 
 - **Офлайн-воспроизведение** MP3, FLAC и WAV через чистый Go (beep + oto), без
@@ -67,8 +94,12 @@ enter play · space pause · / search · a add link · P playlist · x add · ? 
 Для запуска готового `xngxltuiplayer.exe`:
 
 - Windows 10/11 (приложение также собирается под Linux и macOS).
-- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — скачивание.
-- [`ffmpeg`](https://ffmpeg.org/) — конвертация в MP3 и обложки.
+- Папка, куда у вас есть запись. Не запускайте из `C:\Program Files`: рядом с
+  exe создаются `music\` и `data\`.
+- Windows Terminal или другой терминал с Unicode, truecolor и поддержкой мыши.
+  Для терминалов без Unicode есть флаг `-ascii`.
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — только для скачивания.
+- [`ffmpeg`](https://ffmpeg.org/) — только для скачивания/конвертации и обложек.
 - `ffprobe` (обычно идёт вместе с ffmpeg) — длительность треков; без него
   плеер всё равно работает, но в списке может не быть длительности до первого
   воспроизведения.

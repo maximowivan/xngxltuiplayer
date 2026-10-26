@@ -382,6 +382,54 @@ func TestPlayerTitleLayoutResponsive(t *testing.T) {
 	}
 }
 
+func TestPlayerTransportWidthsStayStable(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	defer SetASCIIIcons(false)
+	m.width, m.height = 110, 32
+
+	type layoutCheck struct {
+		name string
+		a, b int
+	}
+	compare := func(label string, a, b playerTitleLayout) {
+		t.Helper()
+		checks := []layoutCheck{
+			{"shuffleStart", a.shuffleStart, b.shuffleStart},
+			{"prevStart", a.prevStart, b.prevStart},
+			{"playStart", a.playStart, b.playStart},
+			{"playEnd", a.playEnd, b.playEnd},
+			{"nextStart", a.nextStart, b.nextStart},
+			{"repeatStart", a.repeatStart, b.repeatStart},
+			{"repeatEnd", a.repeatEnd, b.repeatEnd},
+		}
+		for _, check := range checks {
+			if check.a != check.b {
+				t.Fatalf("%s: %s = %d, want %d", label, check.name, check.a, check.b)
+			}
+		}
+	}
+
+	for _, ascii := range []bool{false, true} {
+		SetASCIIIcons(ascii)
+		m.paused = false
+		playing := m.playerTitleLayout(106)
+		m.paused = true
+		paused := m.playerTitleLayout(106)
+		compare("play/pause", playing, paused)
+
+		m.paused = false
+		m.repeat = "off"
+		off := m.playerTitleLayout(106)
+		m.repeat = "all"
+		all := m.playerTitleLayout(106)
+		m.repeat = "one"
+		one := m.playerTitleLayout(106)
+		compare("repeat off/all", off, all)
+		compare("repeat all/one", all, one)
+	}
+}
+
 func TestMouseVolumeBarAndWheel(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
