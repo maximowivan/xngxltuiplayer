@@ -1,0 +1,24 @@
+# Built binary
+/xngxltuiplayer.exe
+/tuiplay.exe
+/xngxltuiplayer
+/tuiplay
+*.exe
+
+# Portable library and user data
+/music/
+/data/
+
+# Test and debug artifacts
+*.test
+*.out
+coverage.txt
+preview.txt
+
+# Windows shortcuts
+*.lnk
+
+# Editors
+.vscode/
+.idea/
+*.swp
