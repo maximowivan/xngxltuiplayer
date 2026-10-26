@@ -529,16 +529,19 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 		repeatStyle = accent2Style.Bold(true)
 	}
 	playing := m.current != nil && m.loaded && !m.paused && !m.ended
-	// The play triangle gets a five-cell button so it lands exactly in the
-	// middle cell. The two pause bars use a four-cell button, which lets the
-	// pair sit exactly between the two central cells.
-	playText := " " + centerPad(iconPlay, 3) + " "
-	if playing {
-		playText = " " + centerPad(iconPauseButton, 2) + " "
-	}
 	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
+	}
+	// The play button is five cells wide, exactly fitting the triangle. The
+	// pause icon is two cells wide, so its four-cell inner area is padded with
+	// half-cell block spacers: the visible green button stays five cells wide,
+	// while the two bars can sit exactly on the center line.
+	playText := playStyle.Render(" " + centerPad(iconPlay, 3) + " ")
+	if playing {
+		spacerStyle := lipgloss.NewStyle().Foreground(colBg).Background(colAccent2)
+		inner := playStyle.Render(" " + iconPauseButton + " ")
+		playText = spacerStyle.Render("▌") + inner + spacerStyle.Render("▐")
 	}
 
 	prevIcon := iconPrev
@@ -590,7 +593,7 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 
 	transport := shuffleStyle.Render(shuffleIcon) +
 		strings.Repeat(" ", gap) + keyStyle.Render(prevIcon) +
-		strings.Repeat(" ", gap) + playStyle.Render(playText) +
+		strings.Repeat(" ", gap) + playText +
 		strings.Repeat(" ", gap) + keyStyle.Render(nextIcon) +
 		strings.Repeat(" ", gap) + repeatStyle.Render(repeatIcon)
 
