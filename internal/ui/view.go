@@ -533,11 +533,11 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
 	}
-	// The play button is five cells wide, exactly fitting the triangle. The
-	// pause icon is two cells wide, so its four-cell inner area is padded with
-	// half-cell block spacers: the visible green button stays five cells wide,
-	// while the two bars can sit exactly on the center line.
-	playText := playStyle.Render(" " + centerPad(iconPlay, 3) + " ")
+	// Both states reserve a six-cell slot so the buttons to the right never
+	// move. The play button is five cells wide; the extra cell is transparent
+	// padding. The pause button uses half-block edges to keep the same visible
+	// five-cell width while giving the two bars an even inner area.
+	playText := " " + playStyle.Render(" "+centerPad(iconPlay, 3)+" ")
 	if playing {
 		spacerStyle := lipgloss.NewStyle().Foreground(colBg).Background(colAccent2)
 		inner := playStyle.Render(" " + iconPauseButton + " ")
