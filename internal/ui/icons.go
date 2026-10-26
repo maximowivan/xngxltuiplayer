@@ -12,7 +12,7 @@ var (
 	iconDelete      = "✕"
 	iconPlay        = "▶"
 	iconPause       = "‖"
-	iconPauseButton = "❚❚"
+	iconPauseButton = "Ⅱ"
 	iconPrev        = "◀◀"
 	iconNext        = "▶▶"
 )
@@ -41,7 +41,7 @@ func SetASCIIIcons(on bool) {
 	iconDelete = "✕"
 	iconPlay = "▶"
 	iconPause = "‖"
-	iconPauseButton = "❚❚"
+	iconPauseButton = "Ⅱ"
 	iconPrev = "◀◀"
 	iconNext = "▶▶"
 }

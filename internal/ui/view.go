@@ -533,16 +533,15 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
 	}
-	// Both states reserve a six-cell slot so the buttons to the right never
-	// move. The play button is five cells wide; the extra cell is transparent
-	// padding. The pause button uses half-block edges to keep the same visible
-	// five-cell width while giving the two bars an even inner area.
-	playText := " " + playStyle.Render(" "+centerPad(iconPlay, 3)+" ")
+	// A single five-cell button keeps its size and position in both states.
+	// U+2161 (Ⅱ) is used as a text-safe pause symbol: Windows Terminal turns
+	// the emoji pause (⏸) into a colored glyph, while the Roman numeral stays
+	// monochrome and single-cell.
+	playIcon := iconPlay
 	if playing {
-		spacerStyle := lipgloss.NewStyle().Foreground(colBg).Background(colAccent2)
-		inner := playStyle.Render(" " + iconPauseButton + " ")
-		playText = spacerStyle.Render("▌") + inner + spacerStyle.Render("▐")
+		playIcon = iconPauseButton
 	}
+	playText := playStyle.Render(" " + centerPad(playIcon, 3) + " ")
 
 	prevIcon := iconPrev
 	nextIcon := iconNext
