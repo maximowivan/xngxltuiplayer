@@ -522,7 +522,7 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	}
 	repeatIcon := iconRepeat
 	if m.repeat == "one" {
-		repeatIcon += iconRepeatOne
+		repeatIcon = iconRepeat + " " + iconRepeatOne
 	}
 	repeatStyle := dimStyle
 	if m.repeat != "off" {
@@ -533,14 +533,14 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	if m.current == nil {
 		playStyle = faintStyle
 	}
-	// Keep a fixed five-cell hit area around the single-cell play/pause glyph.
-	// There is deliberately no colored button background: it keeps every
-	// transport icon in the same visual language and avoids half-cell hacks.
+	// The play/pause glyph is a single text cell with no colored background.
+	// Center the glyph itself; the repeat/shuffle controls can make the
+	// surrounding group asymmetric.
 	playIcon := iconPlay
 	if playing {
 		playIcon = iconPauseButton
 	}
-	playText := " " + centerPad(playStyle.Render(playIcon), 3) + " "
+	playText := playStyle.Render(playIcon)
 
 	prevIcon := iconPrev
 	nextIcon := iconNext
@@ -549,10 +549,16 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	prevW := ansi.StringWidth(prevIcon)
 	playW := ansi.StringWidth(playText)
 	nextW := ansi.StringWidth(nextIcon)
-	// Reserve space for the "one" indicator in every mode so cycling repeat
-	// does not shift the transport.
-	repeatW := ansi.StringWidth(iconRepeat) + ansi.StringWidth(iconRepeatOne)
-	transportW := shuffleW + gap + prevW + gap + playW + gap + nextW + gap + repeatW
+	// Reserve space for the gap and the "one" indicator in every mode so
+	// cycling repeat does not shift the transport.
+	repeatW := ansi.StringWidth(iconRepeat) + 1 + ansi.StringWidth(iconRepeatOne)
+	transportW := prevW + gap + playW + gap + nextW
+	if shuffleW > 0 {
+		transportW += shuffleW + gap
+	}
+	if repeatW > 0 {
+		transportW += gap + repeatW
+	}
 
 	// At extremely narrow widths keep the core transport usable.
 	if transportW > innerW-2 {
@@ -560,43 +566,54 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 		shuffleW, repeatW = 0, 0
 		transportW = prevW + gap + playW + gap + nextW
 	}
-	centerStart := (innerW - transportW) / 2
-	if centerStart < 0 {
-		centerStart = 0
+
+	playStart := (innerW - playW) / 2
+	if playStart < 0 {
+		playStart = 0
 	}
-	centerEnd := centerStart + transportW
-	leftW := centerStart - 1
+	playEnd := playStart + playW
+	out.playStart = playStart
+	out.playEnd = playEnd
+	out.prevEnd = playStart - gap
+	out.prevStart = out.prevEnd - prevW
+	out.shuffleEnd = out.prevStart - gap
+	out.shuffleStart = out.shuffleEnd - shuffleW
+	out.nextStart = playEnd + gap
+	out.nextEnd = out.nextStart + nextW
+	out.repeatStart = out.nextEnd + gap
+	out.repeatEnd = out.repeatStart + repeatW
+
+	groupStart := out.shuffleStart
+	if shuffleW == 0 {
+		groupStart = out.prevStart
+	}
+	groupEnd := out.repeatEnd
+	if repeatW == 0 {
+		groupEnd = out.nextEnd
+	}
+	leftW := groupStart - 1
 	if leftW < 0 {
 		leftW = 0
 	}
-	rightStart := centerEnd + 1
+	rightStart := groupEnd + 1
 	rightW := innerW - rightStart
 	if rightW < 0 {
 		rightW = 0
 	}
 
-	x := centerStart
-	out.shuffleStart = x
-	out.shuffleEnd = x + shuffleW
-	x = out.shuffleEnd + gap
-	out.prevStart = x
-	out.prevEnd = x + prevW
-	x = out.prevEnd + gap
-	out.playStart = x
-	out.playEnd = x + playW
-	x = out.playEnd + gap
-	out.nextStart = x
-	out.nextEnd = x + nextW
-	x = out.nextEnd + gap
-	out.repeatStart = x
-	out.repeatEnd = x + repeatW
-
-	repeatText := centerPad(repeatIcon, repeatW)
-	transport := shuffleStyle.Render(shuffleIcon) +
-		strings.Repeat(" ", gap) + keyStyle.Render(prevIcon) +
-		strings.Repeat(" ", gap) + playText +
-		strings.Repeat(" ", gap) + keyStyle.Render(nextIcon) +
-		strings.Repeat(" ", gap) + repeatStyle.Render(repeatText)
+	repeatText := ""
+	if repeatW > 0 {
+		repeatText = centerPad(repeatIcon, repeatW)
+	}
+	transport := ""
+	if shuffleW > 0 {
+		transport += shuffleStyle.Render(shuffleIcon) + strings.Repeat(" ", gap)
+	}
+	transport += keyStyle.Render(prevIcon) + strings.Repeat(" ", gap) +
+		playText + strings.Repeat(" ", gap) + keyStyle.Render(nextIcon)
+	if repeatW > 0 {
+		transport += strings.Repeat(" ", gap) + repeatStyle.Render(repeatText)
+	}
 
 	volStr, barStart, barEnd := m.volumeGroup(rightW)
 	volW := ansi.StringWidth(volStr)

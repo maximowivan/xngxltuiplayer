@@ -53,7 +53,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case x >= layout.prevStart && x < layout.prevEnd:
 			return m, m.prevTrack()
-		case x >= layout.playStart && x < layout.playEnd:
+		case x >= layout.playStart-1 && x < layout.playEnd+1:
 			return m, m.togglePlay()
 		case x >= layout.nextStart && x < layout.nextEnd:
 			return m, m.nextTrack()
