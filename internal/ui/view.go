@@ -528,13 +528,14 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	if m.repeat != "off" {
 		repeatStyle = accent2Style.Bold(true)
 	}
-	playIcon := iconPlay
-	if m.current != nil && m.loaded && !m.paused && !m.ended {
-		playIcon = iconPauseButton
+	playing := m.current != nil && m.loaded && !m.paused && !m.ended
+	// The play triangle gets a five-cell button so it lands exactly in the
+	// middle cell. The two pause bars use a four-cell button, which lets the
+	// pair sit exactly between the two central cells.
+	playText := " " + centerPad(iconPlay, 3) + " "
+	if playing {
+		playText = " " + centerPad(iconPauseButton, 2) + " "
 	}
-	// Keep a button with one cell of padding on each side. The pause symbol is
-	// two thick bars with a narrow gap, so it stays centered and compact.
-	playText := " " + centerPad(playIcon, 2) + " "
 	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
 	if m.current == nil {
 		playStyle = lipgloss.NewStyle().Foreground(colFaint)
