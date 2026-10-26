@@ -429,10 +429,10 @@ func (m *Model) renderCover(w, h int) string {
 		if artist := strings.TrimSpace(m.current.Artist); artist != "" {
 			title += " — " + artist
 		}
-		icon = "‖"
+		icon = iconPause
 		iconStyle = accent2Style
 		if m.loaded && !m.paused && !m.ended {
-			icon = "▶"
+			icon = iconPlay
 		}
 	}
 	titleLine := iconStyle.Render(icon) + " " + titleStyle.Render(truncateText(title, maxInt(10, w-6)))
@@ -522,26 +522,25 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	}
 	repeatIcon := iconRepeat
 	if m.repeat == "one" {
-		repeatIcon += "1"
+		repeatIcon += iconRepeatOne
 	}
 	repeatStyle := dimStyle
 	if m.repeat != "off" {
 		repeatStyle = accent2Style.Bold(true)
 	}
 	playing := m.current != nil && m.loaded && !m.paused && !m.ended
-	playStyle := lipgloss.NewStyle().Background(colAccent2).Foreground(colBg).Bold(true)
+	playStyle := accent2Style.Bold(true)
 	if m.current == nil {
-		playStyle = lipgloss.NewStyle().Foreground(colFaint)
+		playStyle = faintStyle
 	}
-	// A single five-cell button keeps its size and position in both states.
-	// U+2161 (Ⅱ) is used as a text-safe pause symbol: Windows Terminal turns
-	// the emoji pause (⏸) into a colored glyph, while the Roman numeral stays
-	// monochrome and single-cell.
+	// Keep a fixed five-cell hit area around the single-cell play/pause glyph.
+	// There is deliberately no colored button background: it keeps every
+	// transport icon in the same visual language and avoids half-cell hacks.
 	playIcon := iconPlay
 	if playing {
 		playIcon = iconPauseButton
 	}
-	playText := playStyle.Render(" " + centerPad(playIcon, 3) + " ")
+	playText := " " + centerPad(playStyle.Render(playIcon), 3) + " "
 
 	prevIcon := iconPrev
 	nextIcon := iconNext
@@ -550,7 +549,9 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	prevW := ansi.StringWidth(prevIcon)
 	playW := ansi.StringWidth(playText)
 	nextW := ansi.StringWidth(nextIcon)
-	repeatW := ansi.StringWidth(repeatIcon)
+	// Reserve space for the "one" indicator in every mode so cycling repeat
+	// does not shift the transport.
+	repeatW := ansi.StringWidth(iconRepeat) + ansi.StringWidth(iconRepeatOne)
 	transportW := shuffleW + gap + prevW + gap + playW + gap + nextW + gap + repeatW
 
 	// At extremely narrow widths keep the core transport usable.
@@ -590,11 +591,12 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 	out.repeatStart = x
 	out.repeatEnd = x + repeatW
 
+	repeatText := centerPad(repeatIcon, repeatW)
 	transport := shuffleStyle.Render(shuffleIcon) +
 		strings.Repeat(" ", gap) + keyStyle.Render(prevIcon) +
 		strings.Repeat(" ", gap) + playText +
 		strings.Repeat(" ", gap) + keyStyle.Render(nextIcon) +
-		strings.Repeat(" ", gap) + repeatStyle.Render(repeatIcon)
+		strings.Repeat(" ", gap) + repeatStyle.Render(repeatText)
 
 	volStr, barStart, barEnd := m.volumeGroup(rightW)
 	volW := ansi.StringWidth(volStr)
