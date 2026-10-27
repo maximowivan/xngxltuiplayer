@@ -87,6 +87,28 @@ func truncateText(s string, width int) string {
 	return ansi.Truncate(s, width, "…")
 }
 
+// cleanText makes dynamic text safe for a single terminal line: strips ANSI
+// escapes, replaces invalid UTF-8, converts tabs/newlines to spaces and drops
+// other control characters.
+func cleanText(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = ansi.Strip(s)
+	s = strings.ToValidUTF8(s, "?")
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	return strings.TrimSpace(s)
+}
+
 func centerLine(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -177,6 +199,7 @@ func renderToast(message string, kind toastKind, width int) string {
 	if width <= 0 {
 		return ""
 	}
+	message = cleanText(message)
 	icon := "•"
 	bg := colBlue
 	switch kind {

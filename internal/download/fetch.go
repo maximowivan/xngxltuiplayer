@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 xngxltuiplayer/1.0"
@@ -376,6 +378,18 @@ func sanitizeToolOutput(s string) string {
 	lines := strings.Split(s, "\n")
 	var useful []string
 	for _, line := range lines {
+		line = ansi.Strip(line)
+		line = strings.ToValidUTF8(line, "?")
+		line = strings.Map(func(r rune) rune {
+			switch {
+			case r == '\t':
+				return ' '
+			case r < 0x20 || r == 0x7f:
+				return -1
+			default:
+				return r
+			}
+		}, line)
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "WARNING:") || strings.HasPrefix(line, "[download]") {
 			continue
@@ -386,8 +400,9 @@ func sanitizeToolOutput(s string) string {
 		useful = useful[len(useful)-4:]
 	}
 	out := strings.Join(useful, " · ")
-	if len(out) > 700 {
-		out = out[:700] + "…"
+	out = strings.ToValidUTF8(out, "?")
+	if runes := []rune(out); len(runes) > 700 {
+		out = string(runes[:700]) + "…"
 	}
 	return out
 }

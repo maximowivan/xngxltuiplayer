@@ -136,7 +136,7 @@ func (m *Model) renderSidebar(width, height int) string {
 			active := strings.EqualFold(m.view, name)
 			selected := m.focus == focusSidebar && m.sidebarCursor == i+3
 			drop := m.dragActive && strings.EqualFold(m.dragTarget, name)
-			lines = append(lines, sidebarRow("≡ "+name, fmt.Sprintf("%d", count), active, selected, drop, innerW))
+			lines = append(lines, sidebarRow("≡ "+cleanText(name), fmt.Sprintf("%d", count), active, selected, drop, innerW))
 		}
 	}
 	for len(lines) < innerH {
@@ -285,8 +285,8 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 
 		dur := model.FormatDuration(t.Duration)
 		avail := width - 2 - 1 - ansi.StringWidth(dur)
-		text := t.DisplayTitle()
-		if artist := t.DisplayArtist(); artist != "" && avail > ansi.StringWidth(text)+4 {
+		text := cleanText(t.DisplayTitle())
+		if artist := cleanText(t.DisplayArtist()); artist != "" && avail > ansi.StringWidth(text)+4 {
 			text += " · " + artist
 		}
 		if avail > 0 {

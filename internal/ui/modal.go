@@ -434,7 +434,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 	for i := offset; i < end; i++ {
 		job := jobs[i]
 		icon := m.downloadStatusIcon(job.Status)
-		title := m.jobLabel(job)
+		title := cleanText(m.jobLabel(job))
 		status := job.Status.String()
 		if !job.Status.Terminal() && job.Progress >= 0 {
 			status = fmt.Sprintf("%s %d%%", status, int(job.Progress*100))
@@ -461,15 +461,15 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 	}
 
 	job := jobs[m.downloadsCur]
-	detail := job.Detail
+	detail := cleanText(job.Detail)
 	if job.Err != "" {
-		detail = job.Err
+		detail = cleanText(job.Err)
 	}
 	if detail == "" {
 		detail = job.Status.String()
 	}
 	lines = append(lines,
-		dimStyle.Render("stage  ")+textStyle.Render(truncateText(job.Stage, 12))+
+		dimStyle.Render("stage  ")+textStyle.Render(truncateText(cleanText(job.Stage), 12))+
 			faintStyle.Render("  ·  ")+dimStyle.Render(truncateText(detail, maxInt(8, innerW-22))),
 	)
 	switch {
@@ -477,11 +477,11 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 		barW := maxInt(8, innerW-12)
 		lines = append(lines, progressBar(job.Progress, barW, true)+dimStyle.Render(fmt.Sprintf("  %d%%", int(job.Progress*100))))
 	case job.Warning != "":
-		lines = append(lines, warningStyle.Render(truncateText("warning: "+job.Warning, innerW)))
+		lines = append(lines, warningStyle.Render(truncateText("warning: "+cleanText(job.Warning), innerW)))
 	case job.Status == download.StatusDone:
-		lines = append(lines, dimStyle.Render("saved to "+truncateText(job.Path, maxInt(8, innerW-9))))
+		lines = append(lines, dimStyle.Render("saved to "+truncateText(cleanText(job.Path), maxInt(8, innerW-9))))
 	default:
-		lines = append(lines, faintStyle.Render("—"))
+		lines = append(lines, faintStyle.Render("–"))
 	}
 	return renderBox("Downloads", lines, width, height, colAccent, colAccent)
 }

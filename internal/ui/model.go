@@ -680,7 +680,7 @@ func (m *Model) viewLabel() string {
 	case viewRecent:
 		return "Recently played"
 	default:
-		return m.view
+		return cleanText(m.view)
 	}
 }
 
@@ -693,7 +693,7 @@ func (m *Model) markDirty() {
 }
 
 func (m *Model) setToast(message string, kind toastKind, d time.Duration) {
-	message = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(message, "\r", " "), "\n", " "))
+	message = cleanText(message)
 	m.toast = message
 	m.toastKind = kind
 	if d <= 0 {
