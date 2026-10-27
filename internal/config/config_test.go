@@ -32,3 +32,13 @@ func TestLoadExplicitDirs(t *testing.T) {
 		t.Fatalf("music dir is not writable: %v", err)
 	}
 }
+
+func TestTemporaryBuildDetection(t *testing.T) {
+	if isTemporaryBuild(t.TempDir()) {
+		t.Fatal("a portable copy in the temp folder must not be treated as go run")
+	}
+	buildDir := filepath.Join(os.TempDir(), "go-build123", "b001", "exe")
+	if !isTemporaryBuild(buildDir) {
+		t.Fatal("go-build directory was not detected")
+	}
+}

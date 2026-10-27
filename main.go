@@ -208,6 +208,9 @@ func runUpdate(cfg config.Config) {
 		fmt.Println("download the latest release from https://github.com/maximowivan/xngxltuiplayer/releases")
 		return
 	}
+	if exe, err := os.Executable(); err == nil && strings.Contains(strings.ToLower(exe), "go-build") {
+		fatal(fmt.Errorf("--update must be run from the built xngxltuiplayer.exe, not via go run"))
+	}
 
 	fmt.Printf("%s %s\n", appName, version)
 	ctx := context.Background()
