@@ -56,9 +56,9 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 	lines := []string{
 		textStyle.Render(truncateText("Paste a link and xngxltuiplayer will download, convert and tag it.", innerW)),
 		"",
-		accent2Style.Render("Spotify track") + faintStyle.Render("  ·  ") +
-			accent2Style.Render("SoundCloud track") + faintStyle.Render("  ·  ") +
-			accent2Style.Render("YouTube") + faintStyle.Render("  ·  ") +
+		accent2Style.Render("Spotify track") + faintStyle.Render(currentGlyphs.Separator) +
+			accent2Style.Render("SoundCloud track") + faintStyle.Render(currentGlyphs.Separator) +
+			accent2Style.Render("YouTube") + faintStyle.Render(currentGlyphs.Separator) +
 			accent2Style.Render("audio URL"),
 		"",
 		fitLine(m.linkInput.View(), innerW),
@@ -69,7 +69,7 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 	} else {
 		lines = append(lines, dimStyle.Render("The file is saved to your music folder as MP3."))
 	}
-	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported — use single tracks."))
+	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported "+currentGlyphs.Dash+" use single tracks."))
 	return renderBox("Add music", lines, width, height, colAccent, colAccent)
 }
 
@@ -151,7 +151,7 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 		pl := items[i]
 		cursor := " "
 		if i == m.modalCursor {
-			cursor = "▸"
+			cursor = currentGlyphs.Cursor
 		}
 		contained := 0
 		for _, path := range m.pendingPaths {
@@ -162,14 +162,14 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 		mark := " "
 		switch {
 		case len(m.pendingPaths) > 0 && contained == len(m.pendingPaths):
-			mark = "✓"
+			mark = currentGlyphs.Check
 		case contained > 0:
-			mark = "◐"
+			mark = currentGlyphs.Partial
 		}
 		left := cursor + " " + mark + " " + cleanText(pl.Name)
 		right := fmt.Sprintf("%d", len(pl.Tracks))
 		if len(m.pendingPaths) > 0 && contained == len(m.pendingPaths) {
-			right = "✓ " + right
+			right = currentGlyphs.Check + " " + right
 		} else if contained > 0 {
 			right = fmt.Sprintf("%d/%d", contained, len(m.pendingPaths))
 		}
@@ -186,7 +186,7 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 	for len(lines) < innerH-1 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, dimStyle.Render("✓ already there · ◐ partly · Enter adds"))
+	lines = append(lines, dimStyle.Render(currentGlyphs.Check+" already there"+currentGlyphs.Separator+currentGlyphs.Partial+" partly"+currentGlyphs.Separator+"Enter adds"))
 	return renderBox("Add to playlist", lines, width, height, colAccent, colAccent)
 }
 
@@ -210,16 +210,16 @@ func (m *Model) renderRemoveFromPlaylistModal(w, contentH int) string {
 	}
 	shown := minInt(count, 5)
 	for i := 0; i < shown; i++ {
-		lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(cleanText(m.deleteTracks[i].DisplayTitle()), maxInt(8, innerW-2))))
+		lines = append(lines, dimStyle.Render(currentGlyphs.Bullet+" ")+textStyle.Render(truncateText(cleanText(m.deleteTracks[i].DisplayTitle()), maxInt(8, innerW-2))))
 	}
 	if count > shown {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more", count-shown)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %sand %d more", currentGlyphs.Ellipsis, count-shown)))
 	}
 	lines = append(lines,
 		"",
 		textStyle.Render("Audio files stay on disk and remain in All tracks."),
 		"",
-		dimStyle.Render("y / enter remove · d delete from disk · esc cancel"),
+		dimStyle.Render("y / enter remove"+currentGlyphs.Separator+"d delete from disk"+currentGlyphs.Separator+"esc cancel"),
 	)
 	return renderBox("Remove from playlist", lines, width, height, colYellow, colYellow)
 }
@@ -252,7 +252,7 @@ func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 			"",
 			textStyle.Render("It will also be removed from every playlist."),
 			"",
-			dimStyle.Render("Press y or enter to delete · esc to cancel."),
+			dimStyle.Render("Press y or enter to delete" + currentGlyphs.Separator + "esc to cancel."),
 		}
 	} else {
 		lines = []string{
@@ -263,16 +263,16 @@ func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 		shown := minInt(count, 5)
 		for i := 0; i < shown; i++ {
 			t := m.deleteTracks[i]
-			lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(cleanText(t.DisplayTitle()), maxInt(8, innerW-2))))
+			lines = append(lines, dimStyle.Render(currentGlyphs.Bullet+" ")+textStyle.Render(truncateText(cleanText(t.DisplayTitle()), maxInt(8, innerW-2))))
 		}
 		if count > shown {
-			lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more", count-shown)))
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  %sand %d more", currentGlyphs.Ellipsis, count-shown)))
 		}
 		lines = append(lines,
 			"",
 			textStyle.Render("They will also be removed from every playlist."),
 			"",
-			dimStyle.Render("Press y or enter to delete · esc to cancel."),
+			dimStyle.Render("Press y or enter to delete"+currentGlyphs.Separator+"esc to cancel."),
 		)
 	}
 	return renderBox("Delete tracks", lines, width, height, colRed, colRed)
@@ -294,7 +294,7 @@ func (m *Model) renderDeletePlaylistModal(w, contentH int) string {
 		"",
 		textStyle.Render("Audio files stay on disk and remain in the library."),
 		"",
-		dimStyle.Render("Press y or enter to delete · esc to cancel."),
+		dimStyle.Render("Press y or enter to delete" + currentGlyphs.Separator + "esc to cancel."),
 	}
 	return renderBox("Delete playlist", lines, width, height, colRed, colRed)
 }
@@ -305,7 +305,7 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 	height := modalHeight(contentH, 23)
 
 	playback := []keyBinding{
-		{"↑ ↓ / j k", "move selection"},
+		{currentGlyphs.UpDownWords + " / j k", "move selection"},
 		{"pgup pgdn", "page up / down"},
 		{"g / G", "first / last"},
 		{"enter", "play / open view"},
@@ -314,16 +314,20 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"esc", "clear search"},
 		{"space", "pause / resume"},
 		{"n / p", "next / previous"},
-		{"← →", "seek 5 seconds"},
+		{currentGlyphs.LeftRightWords, "seek 5 seconds"},
 		{"H / L", "seek 30 seconds"},
 		{"- / =", "volume down / up"},
 		{"s / r", "shuffle / repeat (" + iconShuffle + " / " + iconRepeat + ")"},
 		{"z", "sleep timer"},
 		{"o", "sort library"},
-		{"ctrl+click", "multi-select"},
 		{"ctrl+a", "select all"},
-		{"drag", "tracks to playlist"},
 		{"q", "save & quit"},
+	}
+	if mouseHintAvailable() {
+		playback = append(playback[:15], append([]keyBinding{
+			{"ctrl+click", "multi-select"},
+			{"drag", "tracks to playlist"},
+		}, playback[15:]...)...)
 	}
 	library := []keyBinding{
 		{"a", "add music link"},
@@ -338,7 +342,9 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"u", "rescan library"},
 		{"c", "full-screen cover"},
 		{"t / T", "next / prev theme"},
-		{"mouse", "click · ⇄ ↻ · volume"},
+	}
+	if mouseHintAvailable() {
+		library = append(library, keyBinding{"mouse", "click" + currentGlyphs.Separator + iconShuffle + " " + iconRepeat + currentGlyphs.Separator + "volume"})
 	}
 	downloads := []keyBinding{
 		{"y / enter", "confirm delete"},
@@ -408,7 +414,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 	active := m.mgr.ActiveCount()
 	header := fmt.Sprintf("%d downloads", len(jobs))
 	if active > 0 {
-		header = fmt.Sprintf("%d downloads · %d active", len(jobs), active)
+		header = fmt.Sprintf("%d downloads%s%d active", len(jobs), currentGlyphs.Separator, active)
 	}
 	lines := []string{
 		sectionStyle.Render(header),
@@ -470,7 +476,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 	}
 	lines = append(lines,
 		dimStyle.Render("stage  ")+textStyle.Render(truncateText(cleanText(job.Stage), 12))+
-			faintStyle.Render("  ·  ")+dimStyle.Render(truncateText(detail, maxInt(8, innerW-22))),
+			faintStyle.Render(currentGlyphs.Separator)+dimStyle.Render(truncateText(detail, maxInt(8, innerW-22))),
 	)
 	switch {
 	case !job.Status.Terminal() && job.Progress >= 0:
@@ -481,7 +487,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 	case job.Status == download.StatusDone:
 		lines = append(lines, dimStyle.Render("saved to "+truncateText(cleanText(job.Path), maxInt(8, innerW-9))))
 	default:
-		lines = append(lines, faintStyle.Render("–"))
+		lines = append(lines, faintStyle.Render(currentGlyphs.Dash))
 	}
 	return renderBox("Downloads", lines, width, height, colAccent, colAccent)
 }

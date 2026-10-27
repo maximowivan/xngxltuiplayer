@@ -10,15 +10,21 @@ import (
 	"math"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
 
 // renderArt turns an image into truecolor half-block cells. width and height
-// are measured in terminal cells; height*2 pixel rows are used.
+// are measured in terminal cells; height*2 pixel rows are used. When the
+// terminal or the selected glyph mode cannot render half blocks, a small ASCII
+// note is used instead so the pane keeps its shape.
 func renderArt(img image.Image, width, height int) []string {
-	if img == nil || width <= 0 || height <= 0 {
+	if width <= 0 || height <= 0 {
 		return nil
+	}
+	if img == nil || !currentGlyphs.ArtHalfBlock || activeColorProfile == ColorNone {
+		return renderASCIIArt(width, height)
 	}
 	pixelW := width
 	pixelH := height * 2
@@ -33,10 +39,60 @@ func renderArt(img image.Image, width, height int) []string {
 			bottom := scaled.RGBAAt(x, y*2+1)
 			tr, tg, tb := blendOnDark(top)
 			br, bg, bb := blendOnDark(bottom)
-			fmt.Fprintf(&b, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀", tr, tg, tb, br, bg, bb)
+			fg := colorSequence(lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", tr, tg, tb)), false)
+			bgc := colorSequence(lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", br, bg, bb)), true)
+			b.WriteString(fg)
+			b.WriteString(bgc)
+			b.WriteRune('▀')
 		}
 		b.WriteString("\x1b[0m")
 		lines = append(lines, b.String())
+	}
+	return lines
+}
+
+// renderASCIIArt draws a compact note with printable characters. It is used on
+// classic consoles, in ASCII mode and whenever colour is disabled.
+func renderASCIIArt(width, height int) []string {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	note := []string{
+		"  ##   ",
+		"  ## # ",
+		"  ## # ",
+		"  ##   ",
+		"####   ",
+		"###    ",
+		" #     ",
+	}
+	scale := 1
+	if s := minInt(width/len(note[0]), height/len(note)); s > 1 {
+		scale = s
+	}
+	artW := len(note[0]) * scale
+	artH := len(note) * scale
+	top := maxInt(0, (height-artH)/2)
+	left := maxInt(0, (width-artW)/2)
+	lines := make([]string, height)
+	for y := 0; y < height; y++ {
+		if y < top || y >= top+artH {
+			lines[y] = fitLine("", width)
+			continue
+		}
+		src := note[(y-top)/scale]
+		var b strings.Builder
+		b.WriteString(strings.Repeat(" ", left))
+		for _, ch := range src {
+			for i := 0; i < scale; i++ {
+				if ch == '#' {
+					b.WriteByte('#')
+				} else {
+					b.WriteByte(' ')
+				}
+			}
+		}
+		lines[y] = fitLine(accent2Style.Render(b.String()), width)
 	}
 	return lines
 }
@@ -131,8 +187,6 @@ func clampByte(v float64) uint8 {
 	return uint8(v)
 }
 
-var blockRunes = []rune("▁▂▃▄▅▆▇█")
-
 // renderSpectrum draws a smooth bar visualizer with one column gap per bar.
 func renderSpectrum(levels []float64, width, rows int) []string {
 	if width <= 0 || rows <= 0 {
@@ -156,7 +210,7 @@ func renderSpectrum(levels []float64, width, rows int) []string {
 		for i := 0; i < rows-1; i++ {
 			lines[i] = strings.Repeat(" ", width)
 		}
-		baseline := strings.Repeat("· ", slots)
+		baseline := strings.Repeat(currentGlyphs.SpectrumBase, slots)
 		lines[rows-1] = fitLine(dimStyle.Render(truncateText(baseline, width)), width)
 		return lines
 	}
@@ -177,15 +231,26 @@ func renderSpectrum(levels []float64, width, rows int) []string {
 			if filled <= 0 {
 				b.WriteString(" ")
 			} else {
-				idx := int(math.Ceil(filled * float64(len(blockRunes))))
-				if idx < 1 {
-					idx = 1
-				}
-				if idx > len(blockRunes) {
-					idx = len(blockRunes)
+				glyph := '#'
+				if currentGlyphs.SpectrumBlocks && len(currentGlyphs.Spectrum) > 0 {
+					idx := int(math.Ceil(filled * float64(len(currentGlyphs.Spectrum))))
+					if idx < 1 {
+						idx = 1
+					}
+					if idx > len(currentGlyphs.Spectrum) {
+						idx = len(currentGlyphs.Spectrum)
+					}
+					glyph = currentGlyphs.Spectrum[idx-1]
 				}
 				r, g, bl := spectrumRGB(level)
-				fmt.Fprintf(&b, "\x1b[38;2;%d;%d;%dm%c\x1b[0m", r, g, bl, blockRunes[idx-1])
+				seq := colorSequence(lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", r, g, bl)), false)
+				if seq != "" {
+					b.WriteString(seq)
+				}
+				b.WriteRune(glyph)
+				if seq != "" {
+					b.WriteString("\x1b[0m")
+				}
 			}
 			b.WriteString(" ")
 		}

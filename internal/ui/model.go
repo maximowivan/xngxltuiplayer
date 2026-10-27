@@ -251,10 +251,10 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 		m.startupUntil = time.Now().Add(15 * time.Second)
 	}
 
-	m.linkInput = newInput("› ", "https://open.spotify.com/track/…", 4096)
-	m.nameInput = newInput("› ", "Playlist name", 48)
-	m.m3uInput = newInput("› ", "playlist.m3u8 (relative to the music folder)", 4096)
-	m.searchInput = newInput("/ ", "search title, artist, album…", 120)
+	m.linkInput = newInput(currentGlyphs.Prompt, "https://open.spotify.com/track/"+currentGlyphs.Ellipsis, 4096)
+	m.nameInput = newInput(currentGlyphs.Prompt, "Playlist name", 48)
+	m.m3uInput = newInput(currentGlyphs.Prompt, "playlist.m3u8 (relative to the music folder)", 4096)
+	m.searchInput = newInput("/ ", "search title, artist, album"+currentGlyphs.Ellipsis, 120)
 
 	engine.SetVolume(float64(volume) / 100)
 	return m
@@ -1482,7 +1482,7 @@ func (m *Model) removePlaylistTracksNow() tea.Cmd {
 	if removed > 1 {
 		noun = "tracks"
 	}
-	m.setToast(fmt.Sprintf("Removed %d %s from %s · files kept", removed, noun, m.view), toastSuccess, 3*time.Second)
+	m.setToast(fmt.Sprintf("Removed %d %s from %s%s files kept", removed, noun, m.view, currentGlyphs.Separator), toastSuccess, 3*time.Second)
 	m.markDirty()
 	return nil
 }
@@ -1585,7 +1585,7 @@ func (m *Model) deleteTrackNow() tea.Cmd {
 	case deleted == 0 && firstErr != nil:
 		m.setToast("Delete failed: "+firstErr.Error(), toastError, 5*time.Second)
 	case firstErr != nil:
-		m.setToast(fmt.Sprintf("Deleted %d of %d tracks · %v", deleted, len(tracks), firstErr), toastWarning, 5*time.Second)
+		m.setToast(fmt.Sprintf("Deleted %d of %d tracks%s%v", deleted, len(tracks), currentGlyphs.Separator, firstErr), toastWarning, 5*time.Second)
 	case len(tracks) == 1:
 		m.setToast("Deleted "+tracks[0].DisplayTitle(), toastSuccess, 3*time.Second)
 	default:
@@ -1768,7 +1768,7 @@ func (m *Model) openAddToPlaylist() tea.Cmd {
 	}
 	items := m.playlists.List()
 	if len(items) == 0 {
-		m.setToast("No playlists yet — press P to create one", toastInfo, 3*time.Second)
+		m.setToast("No playlists yet "+currentGlyphs.Dash+" press P to create one", toastInfo, 3*time.Second)
 		return nil
 	}
 	m.pendingTrack = tracks[0]
@@ -1996,7 +1996,7 @@ func (m *Model) addPendingToPlaylist() tea.Cmd {
 		msg = fmt.Sprintf("Added %d tracks to %s", added, name)
 	}
 	if skipped > 0 {
-		msg += fmt.Sprintf(" · %d already there", skipped)
+		msg += fmt.Sprintf("%s%d already there", currentGlyphs.Separator, skipped)
 	}
 	m.setToast(msg, toastSuccess, 3*time.Second)
 	m.markDirty()

@@ -85,7 +85,7 @@ func (m *Model) finishTrackDrag() tea.Cmd {
 		}
 		msg := "Added " + trackCount(added) + " to " + target
 		if skipped > 0 {
-			msg += " · " + strconv.Itoa(skipped) + " already there"
+			msg += currentGlyphs.Separator + strconv.Itoa(skipped) + " already there"
 		}
 		m.setToast(msg, toastSuccess, 4*time.Second)
 		m.markDirty()
@@ -109,14 +109,14 @@ func (m *Model) finishTrackDrag() tea.Cmd {
 		msg = "Already in " + target
 		kind = toastInfo
 	case added == 0 && skipped > 0:
-		msg = "Removed " + trackCount(moved) + " from " + source + " · already in " + target
+		msg = "Removed " + trackCount(moved) + " from " + source + currentGlyphs.Separator + "already in " + target
 	case moved > 0:
 		msg = "Moved " + trackCount(moved) + " to " + target
 	default:
 		msg = "Added " + trackCount(added) + " to " + target
 	}
 	if skipped > 0 && moved > 0 && added > 0 {
-		msg += " · " + strconv.Itoa(skipped) + " already there"
+		msg += currentGlyphs.Separator + strconv.Itoa(skipped) + " already there"
 	}
 	m.setToast(msg, kind, 4*time.Second)
 	m.markDirty()

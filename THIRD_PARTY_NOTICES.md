@@ -5,6 +5,11 @@ It uses the following Go modules. Their license texts are reproduced below.
 
 `yt-dlp` and `ffmpeg`/`ffprobe` are external tools installed separately and are not part of the release archive.
 
+Windows Terminal is an optional component downloaded by the installer. It is
+distributed under the MIT license; its own notices are placed next to the
+portable executable in `terminal\NOTICE.html`. It is not part of the base
+release archive.
+
 ## github.com/atotto/clipboard v0.1.4
 
 ### LICENSE

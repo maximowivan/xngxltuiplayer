@@ -69,7 +69,7 @@ var themePalettes = []themePalette{
 		SelBg: "#44475A", SelFg: "#F8F8F2", Bg: "#282A36",
 	},
 	{
-		Name: "rosepine", Label: "Rosé Pine Moon",
+		Name: "rosepine", Label: "Rose Pine Moon",
 		Text: "#E0DEF4", Dim: "#908CAA", Faint: "#625E7D",
 		Accent: "#C4A7E7", Accent2: "#9CCFD8",
 		Pink: "#EBBCBA", Green: "#95B1AC", Yellow: "#F6C177",
@@ -91,6 +91,7 @@ const defaultTheme = "catppuccin"
 var currentTheme = defaultTheme
 
 func init() {
+	SetColorProfile(ColorTrueColor)
 	applyTheme(defaultTheme)
 }
 

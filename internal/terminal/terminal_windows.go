@@ -34,6 +34,28 @@ func platformInfo() (elevated bool, fontFace string, fontSize int, outputCP uint
 	return
 }
 
+// platformVT reports whether the current output console accepts VT escape
+// sequences. It tries to enable the flag and restores the original mode so a
+// preflight check does not change the user's console.
+func platformVT() bool {
+	handle, err := windows.GetStdHandle(windows.STD_OUTPUT_HANDLE)
+	if err != nil {
+		return false
+	}
+	var mode uint32
+	if err := windows.GetConsoleMode(handle, &mode); err != nil {
+		return false
+	}
+	if mode&windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+		return true
+	}
+	if err := windows.SetConsoleMode(handle, mode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING); err != nil {
+		return false
+	}
+	_ = windows.SetConsoleMode(handle, mode)
+	return true
+}
+
 func currentConsoleWindowClass() string {
 	if err := procGetConsoleWindow.Find(); err != nil {
 		return ""

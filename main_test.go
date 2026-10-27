@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"tuiplay/internal/terminal"
+	"tuiplay/internal/ui"
+)
 
 func TestParseIconMode(t *testing.T) {
 	cases := []struct {
@@ -26,5 +31,74 @@ func TestParseIconMode(t *testing.T) {
 	}
 	if _, err := parseIconMode("emoji", false); err == nil {
 		t.Fatal("expected an error for an unknown icon mode")
+	}
+}
+
+func TestParseUIMode(t *testing.T) {
+	cases := map[string]string{
+		"":       "auto",
+		"auto":   "auto",
+		"full":   "full",
+		"compat": "compat",
+		"ascii":  "ascii",
+		"ASCII":  "ascii",
+	}
+	for value, want := range cases {
+		got, err := parseUIMode(value, false)
+		if err != nil {
+			t.Fatalf("parseUIMode(%q): %v", value, err)
+		}
+		if got != want {
+			t.Fatalf("parseUIMode(%q) = %q, want %q", value, got, want)
+		}
+	}
+	if got, err := parseUIMode("full", true); err != nil || got != "ascii" {
+		t.Fatalf("parseUIMode(full, ascii) = %q, %v; want ascii", got, err)
+	}
+	if _, err := parseUIMode("pretty", false); err == nil {
+		t.Fatal("expected an error for an unknown UI mode")
+	}
+}
+
+func TestParseColorMode(t *testing.T) {
+	for _, value := range []string{"", "auto", "truecolor", "256", "16", "none", "NONE"} {
+		if _, err := parseColorMode(value); err != nil {
+			t.Fatalf("parseColorMode(%q): %v", value, err)
+		}
+	}
+	if _, err := parseColorMode("16m"); err == nil {
+		t.Fatal("expected an error for an unknown colour mode")
+	}
+}
+
+func TestResolveGlyphAndIconModes(t *testing.T) {
+	info := terminal.Info{Glyphs: terminal.GlyphsCompat, Unicode: false}
+	if got := resolveGlyphMode("auto", info); got != ui.GlyphsCompat {
+		t.Fatalf("auto glyph mode = %s, want compat", got)
+	}
+	if got := resolveGlyphMode("full", info); got != ui.GlyphsFull {
+		t.Fatalf("forced full glyph mode = %s", got)
+	}
+	if !resolveIconASCII("auto", ui.GlyphsCompat) {
+		t.Fatal("compat mode should select ASCII icons")
+	}
+	if resolveIconASCII("unicode", ui.GlyphsCompat) {
+		t.Fatal("forced Unicode icons should override compat")
+	}
+	if resolveIconASCII("auto", ui.GlyphsFull) {
+		t.Fatal("full mode should select Unicode icons")
+	}
+}
+
+func TestResolveColorProfile(t *testing.T) {
+	info := terminal.Info{Color: terminal.ColorANSI256}
+	if got := resolveColorProfile("auto", info); got != ui.ColorANSI256 {
+		t.Fatalf("auto color = %s, want 256", got)
+	}
+	if got := resolveColorProfile("none", info); got != ui.ColorNone {
+		t.Fatalf("forced color = %s, want none", got)
+	}
+	if got := mapColorProfile(terminal.ColorTrueColor); got != ui.ColorTrueColor {
+		t.Fatalf("mapped color = %s", got)
 	}
 }

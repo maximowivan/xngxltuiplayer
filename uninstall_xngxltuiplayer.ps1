@@ -108,6 +108,16 @@ foreach ($name in $files) {
     }
 }
 
+$terminalDir = Join-Path $InstallDir "terminal"
+if (Test-Path -LiteralPath $terminalDir) {
+    try {
+        Remove-Item -LiteralPath $terminalDir -Recurse -Force
+        Write-Info "Удалён портативный Windows Terminal"
+    } catch {
+        Write-Warn "Не удалось удалить terminal\`: $($_.Exception.Message). Закройте Windows Terminal и повторите."
+    }
+}
+
 if ($deleteData) {
     Write-Step "Данные"
     foreach ($name in @("music", "data")) {

@@ -7,7 +7,9 @@
     If xngxltuiplayer.exe is next to this script, the files are installed from
     that folder (the portable release zip). Otherwise the latest Windows release
     is downloaded from GitHub, its SHA256 is verified and the player is
-    installed. Existing music\ and data\ folders are never deleted.
+    installed. Existing music\ and data\ folders are never deleted. If Windows
+    Terminal is missing, the installer can optionally place a portable copy in
+    terminal\ for the full UI; without it the player uses compatibility mode.
 
 .PARAMETER InstallDir
     Target folder. Default: %LOCALAPPDATA%\Programs\xngxltuiplayer
@@ -18,6 +20,20 @@
 .PARAMETER NoDeps
     Do not try to install yt-dlp/ffmpeg with winget.
 
+.PARAMETER NoTerminal
+    Do not offer to install Windows Terminal. The player still works in the
+    classic console compatibility mode.
+
+.PARAMETER WithTerminal
+    Install Windows Terminal without asking when it is missing.
+
+.PARAMETER PortableTerminal
+    Use the self-contained Windows Terminal ZIP in the install folder instead
+    of an already installed Windows Terminal.
+
+.PARAMETER TerminalZip
+    Path to a local Microsoft.WindowsTerminal_..._x64.zip for offline installs.
+
 .PARAMETER SourceDir
     Install from this folder instead of the script folder or GitHub.
 #>
@@ -25,6 +41,10 @@ param(
     [string]$InstallDir = "",
     [switch]$NoShortcut,
     [switch]$NoDeps,
+    [switch]$NoTerminal,
+    [switch]$WithTerminal,
+    [switch]$PortableTerminal,
+    [string]$TerminalZip = "",
     [string]$SourceDir = ""
 )
 
@@ -128,12 +148,115 @@ function Install-Tool {
     return $false
 }
 
+$script:TerminalVersion = "1.25.2733.0"
+$script:TerminalUrl = "https://github.com/microsoft/terminal/releases/download/v$($script:TerminalVersion)/Microsoft.WindowsTerminal_$($script:TerminalVersion)_x64.zip"
+$script:TerminalSha256 = "bf3ef2012f6c44d8340a4c58125acc9498d19b580f9890dc043cdf831852e796"
+
+function Get-WindowsTerminalPackages {
+    try {
+        $packages = @()
+        $packages += @(Get-AppxPackage -Name "Microsoft.WindowsTerminal" -ErrorAction SilentlyContinue)
+        $packages += @(Get-AppxPackage -Name "Microsoft.WindowsTerminalPreview" -ErrorAction SilentlyContinue)
+        return @($packages | Where-Object { $_ })
+    } catch {
+        return @()
+    }
+}
+
+function Find-PortableWindowsTerminal {
+    param([string]$Dir)
+    if (-not $Dir) { return $null }
+    $wt = Join-Path $Dir "terminal\wt.exe"
+    if (Test-Path -LiteralPath $wt) { return $wt }
+    return $null
+}
+
 function Find-WindowsTerminal {
-    $cmd = Get-Command "wt.exe" -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    param([string]$PreferredDir = "")
+    $portable = Find-PortableWindowsTerminal $PreferredDir
+    if ($portable) { return $portable }
+
+    # The wt.exe alias can exist as a Store stub even when the package is not
+    # installed, so check the package first.
+    if ((Get-WindowsTerminalPackages).Count -eq 0) { return $null }
     $alias = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\wt.exe"
     if (Test-Path -LiteralPath $alias) { return $alias }
+    $cmd = Get-Command "wt.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
     return $null
+}
+
+function Install-PortableWindowsTerminal {
+    param(
+        [string]$Dir,
+        [string]$ZipPath = ""
+    )
+
+    $existing = Find-PortableWindowsTerminal $Dir
+    if ($existing) { return $existing }
+    if ([Environment]::OSVersion.Version.Build -lt 19041) {
+        Write-Warn "Портативный Windows Terminal требует Windows 10 2004+; на этой системе останется режим совместимости."
+        return $null
+    }
+
+    $temp = Join-Path $env:TEMP ("xngxltuiplayer-wt-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $temp -Force | Out-Null
+    try {
+        $zip = $ZipPath
+        if (-not $zip) {
+            $zip = Join-Path $temp "windows-terminal.zip"
+            Write-Info "Скачивание Windows Terminal $($script:TerminalVersion) (~12 МБ)..."
+            Invoke-WebRequest -Uri $script:TerminalUrl -OutFile $zip -UseBasicParsing `
+                -Headers @{ "User-Agent" = "xngxltuiplayer-installer" } -TimeoutSec 180
+            $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $script:TerminalSha256) {
+                Write-Warn "SHA256 Windows Terminal не совпал; установка терминала пропущена."
+                return $null
+            }
+        } else {
+            if (-not (Test-Path -LiteralPath $zip)) {
+                Write-Warn "Локальный архив Windows Terminal не найден: $zip"
+                return $null
+            }
+            Write-Info "Используется локальный архив Windows Terminal"
+        }
+
+        $extract = Join-Path $temp "extract"
+        Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+        $exe = Get-ChildItem -LiteralPath $extract -Recurse -Filter "WindowsTerminal.exe" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if (-not $exe) {
+            Write-Warn "В архиве Windows Terminal не найден WindowsTerminal.exe."
+            return $null
+        }
+        $sig = Get-AuthenticodeSignature -LiteralPath $exe.FullName
+        if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Microsoft Corporation") {
+            Write-Warn "Подпись Windows Terminal недействительна; установка терминала пропущена."
+            return $null
+        }
+
+        $dest = Join-Path $Dir "terminal"
+        if (Test-Path -LiteralPath $dest) {
+            Remove-Item -LiteralPath $dest -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        Get-ChildItem -LiteralPath $exe.DirectoryName -Force |
+            Copy-Item -Destination $dest -Recurse -Force
+        New-Item -ItemType File -Path (Join-Path $dest ".portable") -Force | Out-Null
+
+        $wt = Join-Path $dest "wt.exe"
+        if (-not (Test-Path -LiteralPath $wt)) {
+            Write-Warn "Windows Terminal распакован, но wt.exe не найден."
+            return $null
+        }
+        Write-Info "Windows Terminal установлен в $dest"
+        return $wt
+    } catch {
+        Write-Warn "Не удалось установить Windows Terminal: $($_.Exception.Message)"
+        return $null
+    } finally {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Register-UninstallEntry {
@@ -341,6 +464,29 @@ try {
     Write-Info "Файлы установлены в $InstallDir"
     Write-Info "music\ и data\ не затрагиваются: существующие данные сохранены."
 
+    $terminal = $null
+    if (-not $NoTerminal) {
+        $terminal = Find-WindowsTerminal $InstallDir
+        $explicitTerminal = $WithTerminal -or $PortableTerminal -or [bool]$TerminalZip
+        if ($PortableTerminal -or $TerminalZip -or ($explicitTerminal -and -not $terminal)) {
+            $portable = Install-PortableWindowsTerminal -Dir $InstallDir -ZipPath $TerminalZip
+            if ($portable) { $terminal = $portable }
+        } elseif (-not $terminal -and -not $NoShortcut) {
+            Write-Host ""
+            Write-Host "Windows Terminal не найден. Установить портативный Windows Terminal для полного интерфейса?" -ForegroundColor Yellow
+            Write-Host "Без него плеер работает в режиме совместимости; это не обязательно."
+            $answer = Read-Host "Установить Windows Terminal? [y/N]"
+            if ($answer -match '^(y|yes|д|да)$') {
+                $terminal = Install-PortableWindowsTerminal -Dir $InstallDir -ZipPath $TerminalZip
+            }
+        }
+    }
+    if ($terminal) {
+        Write-Info "Плеер будет запускаться в Windows Terminal: $terminal"
+    } elseif (-not $NoTerminal) {
+        Write-Info "Windows Terminal не установлен — ярлык запустит exe напрямую"
+    }
+
     $shortcutCount = 0
     if (-not $NoShortcut) {
         Write-Step "Ярлыки"
@@ -353,12 +499,6 @@ try {
         try { $programs = [string]$shell.SpecialFolders("Programs") } catch { }
         if (-not $desktop) { $desktop = [Environment]::GetFolderPath("Desktop") }
         $shortcutDirs = @($desktop, $programs) | Where-Object { $_ } | Select-Object -Unique
-        $wt = Find-WindowsTerminal
-        if ($wt) {
-            Write-Info "Ярлык откроет плеер в Windows Terminal"
-        } else {
-            Write-Info "Windows Terminal не найден — ярлык запустит exe напрямую"
-        }
 
         foreach ($dir in $shortcutDirs) {
             try {
@@ -367,8 +507,8 @@ try {
                 }
                 $lnkPath = Join-Path $dir "xngxltuiplayer.lnk"
                 $lnk = $shell.CreateShortcut($lnkPath)
-                if ($wt) {
-                    $lnk.TargetPath = $wt
+                if ($terminal) {
+                    $lnk.TargetPath = $terminal
                     $lnk.Arguments = "-d `"$InstallDir`" `"$exe`""
                 } else {
                     $lnk.TargetPath = $exe

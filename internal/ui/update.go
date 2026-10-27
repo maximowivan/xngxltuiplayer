@@ -216,7 +216,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "u":
 		if cmd := m.startRefresh(); cmd != nil {
-			m.setToast("Refreshing library…", toastInfo, 2*time.Second)
+			m.setToast("Refreshing library"+currentGlyphs.Ellipsis, toastInfo, 2*time.Second)
 			return m, cmd
 		}
 		return m, nil
@@ -449,7 +449,7 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "c":
 			if job, ok := m.selectedJob(); ok && !job.Status.Terminal() {
 				m.mgr.Cancel(job.ID)
-				m.setToast("Canceling download…", toastInfo, 2*time.Second)
+				m.setToast("Canceling download"+currentGlyphs.Ellipsis, toastInfo, 2*time.Second)
 			} else if ok {
 				m.setToast("This download has already finished", toastInfo, 2*time.Second)
 			}
@@ -473,15 +473,15 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) downloadStatusIcon(status download.Status) string {
 	switch status {
 	case download.StatusDone:
-		return "✓"
+		return currentGlyphs.Check
 	case download.StatusFailed:
-		return "✕"
+		return currentGlyphs.Cross
 	case download.StatusCanceled:
-		return "–"
+		return currentGlyphs.Dash
 	case download.StatusQueued:
-		return "·"
+		return currentGlyphs.Bullet
 	default:
-		return "↓"
+		return currentGlyphs.Down
 	}
 }
 
@@ -491,7 +491,7 @@ func (m *Model) jobLabel(job download.Job) string {
 		title = job.URL
 	}
 	if job.Artist != "" {
-		title = job.Artist + " — " + title
+		title = job.Artist + " " + currentGlyphs.Dash + " " + title
 	}
 	return title
 }

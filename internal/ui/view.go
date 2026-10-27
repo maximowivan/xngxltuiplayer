@@ -46,13 +46,13 @@ func (m *Model) renderView() string {
 func (m *Model) renderHeader(w int) string {
 	left := gradientText(iconLogo+" xngxltuiplayer", colAccent, colAccent2)
 
-	right := dimStyle.Render(m.viewLabel()) + faintStyle.Render(" · ") +
+	right := dimStyle.Render(m.viewLabel()) + faintStyle.Render(currentGlyphs.Separator) +
 		dimStyle.Render(fmt.Sprintf("%d tracks", len(m.visible)))
 	if m.search != "" {
-		right += faintStyle.Render(" · ") + accent2Style.Render("filtered")
+		right += faintStyle.Render(currentGlyphs.Separator) + accent2Style.Render("filtered")
 	}
 	if active := m.mgr.ActiveCount(); active > 0 {
-		right += faintStyle.Render(" · ") + accent2Style.Render(fmt.Sprintf("↓ %d", active))
+		right += faintStyle.Render(currentGlyphs.Separator) + accent2Style.Render(fmt.Sprintf("%s %d", currentGlyphs.Down, active))
 	}
 	return fitLine(padBetween(left, right, w), w)
 }
@@ -137,7 +137,7 @@ func (m *Model) renderSidebar(width, height int) string {
 			active := strings.EqualFold(m.view, name)
 			selected := m.focus == focusSidebar && m.sidebarCursor == i+3
 			drop := m.dragActive && strings.EqualFold(m.dragTarget, name)
-			lines = append(lines, sidebarRow("≡ "+cleanText(name), fmt.Sprintf("%d", count), active, selected, drop, innerW))
+			lines = append(lines, sidebarRow(currentGlyphs.Playlist+" "+cleanText(name), fmt.Sprintf("%d", count), active, selected, drop, innerW))
 		}
 	}
 	for len(lines) < innerH {
@@ -149,11 +149,11 @@ func (m *Model) renderSidebar(width, height int) string {
 func sidebarRow(label, count string, active, selected, drop bool, width int) string {
 	mark := " "
 	if drop {
-		mark = "→"
+		mark = currentGlyphs.Drop
 	} else if active {
-		mark = "●"
+		mark = currentGlyphs.Active
 	} else if selected {
-		mark = "▸"
+		mark = currentGlyphs.Cursor
 	}
 	left := mark + " " + label
 	plain := padBetween(left, count, width)
@@ -177,7 +177,7 @@ func (m *Model) renderCenter(width, height int) string {
 	if m.searching {
 		input := m.searchInput.View()
 		if ansi.StringWidth(input) > innerW {
-			input = ansi.Truncate(input, innerW, "…")
+			input = ansi.Truncate(input, innerW, ellipsisFor(innerW))
 		}
 		lines = append(lines, input)
 	}
@@ -200,7 +200,7 @@ func (m *Model) renderCenter(width, height int) string {
 	footerRight := ""
 	if m.selectionCount() > 0 {
 		footerLeft = fmt.Sprintf("%d selected of %d", m.selectionCount(), len(m.visible))
-		footerRight = "x add · D delete"
+		footerRight = "x add" + currentGlyphs.Separator + "D delete"
 	} else if m.current != nil && len(m.queue) > 0 {
 		footerRight = fmt.Sprintf("queue %d/%d", m.queueIndex+1, len(m.queue))
 	} else if len(m.visible) > 0 {
@@ -210,7 +210,7 @@ func (m *Model) renderCenter(width, height int) string {
 
 	title := m.viewLabel()
 	if m.search != "" {
-		title += " · /" + truncateText(cleanText(m.search), 24)
+		title += currentGlyphs.Separator + "/" + truncateText(cleanText(m.search), 24)
 	}
 	return renderBox(title, lines, width, height, colFaint, colAccent)
 }
@@ -270,16 +270,16 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 
 		cursor := " "
 		if isCursor {
-			cursor = "▸"
+			cursor = currentGlyphs.Cursor
 		} else if isMarked {
-			cursor = "✓"
+			cursor = currentGlyphs.Checked
 		}
 		marker := " "
 		if isCurrent {
 			if m.loaded && !m.paused && !m.ended {
-				marker = "▶"
+				marker = iconPlay
 			} else {
-				marker = "‖"
+				marker = iconPause
 			}
 		}
 		prefix := cursor + marker
@@ -288,7 +288,7 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 		avail := width - 2 - 1 - ansi.StringWidth(dur)
 		text := cleanText(t.DisplayTitle())
 		if artist := cleanText(t.DisplayArtist()); artist != "" && avail > ansi.StringWidth(text)+4 {
-			text += " · " + artist
+			text += currentGlyphs.Separator + artist
 		}
 		if avail > 0 {
 			text = truncateText(text, avail)
@@ -345,7 +345,7 @@ func (m *Model) renderRightPane(width, height int) string {
 		lines = append(lines, accent2Style.Render(truncateText(cleanText(m.current.DisplayArtist()), innerW)))
 		album := cleanText(m.current.DisplayAlbum())
 		if y := strings.TrimSpace(cleanText(m.current.Year)); y != "" {
-			album += " · " + y
+			album += currentGlyphs.Separator + y
 		}
 		ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(m.current.Path), "."))
 		if ext == "" {
@@ -353,13 +353,13 @@ func (m *Model) renderRightPane(width, height int) string {
 		}
 		ext = cleanText(ext)
 		if strings.TrimSpace(album) != "" {
-			album += " · " + ext
+			album += currentGlyphs.Separator + ext
 		} else {
 			album = ext
 		}
 		lines = append(lines, dimStyle.Render(truncateText(album, innerW)))
 		if m.artLoading {
-			lines = append(lines, dimStyle.Render("loading cover…"))
+			lines = append(lines, dimStyle.Render("loading cover"+currentGlyphs.Ellipsis))
 		}
 	}
 
@@ -380,7 +380,7 @@ func (m *Model) renderRightPane(width, height int) string {
 	if len(lines) > innerH {
 		lines = lines[:innerH]
 	}
-	return renderBox("Now playing "+iconCover+" · c", lines, width, height, colFaint, colAccent2)
+	return renderBox("Now playing "+iconCover+currentGlyphs.Separator+"c", lines, width, height, colFaint, colAccent2)
 }
 
 // rightArtSize returns the cover size that fits the now-playing pane.
@@ -442,12 +442,12 @@ func (m *Model) renderCover(w, h int) string {
 	}
 
 	title := "Nothing playing"
-	icon := "■"
+	icon := currentGlyphs.Stop
 	iconStyle := faintStyle
 	if m.current != nil {
 		title = cleanText(m.current.DisplayTitle())
 		if artist := strings.TrimSpace(cleanText(m.current.Artist)); artist != "" {
-			title += " — " + artist
+			title += " " + currentGlyphs.Dash + " " + artist
 		}
 		icon = iconPause
 		iconStyle = accent2Style
@@ -476,7 +476,7 @@ func (m *Model) renderCoverHints() string {
 		return hintLine(
 			keyHint("c / esc", "close"),
 			keyHint("space", "pause"),
-			keyHint("← →", "seek"),
+			keyHint(currentGlyphs.LeftRight, "seek"),
 			keyHint("t", "theme"),
 			keyHint("?", "help"),
 			keyHint("q", "quit"),
@@ -656,7 +656,7 @@ func (m *Model) playerTitleLayout(innerW int) playerTitleLayout {
 }
 
 func (m *Model) playerNowText() string {
-	icon := "■"
+	icon := currentGlyphs.Stop
 	iconStyle := faintStyle
 	text := dimStyle.Render("Nothing playing")
 	if m.current != nil {
@@ -696,7 +696,7 @@ func (m *Model) volumeGroup(width int) (string, int, int) {
 				volColor = colRed
 			}
 			bar := lipgloss.NewStyle().Foreground(volColor).Render(volumeBar(m.volume, barW))
-			group := dimStyle.Render("vol ") + keyStyle.Render("−") + bar + keyStyle.Render("+") +
+			group := dimStyle.Render("vol ") + keyStyle.Render("-") + bar + keyStyle.Render("+") +
 				dimStyle.Render(fmt.Sprintf(" %3d%%", m.volume))
 			return group, 5, 5 + barW
 		}
@@ -733,7 +733,7 @@ func (m *Model) playerProgressRight(innerW, segEnd int) string {
 			avail -= qW + 2
 		}
 		if avail >= 4 {
-			right := dimStyle.Render("next  ") + textStyle.Render(ansi.Truncate(next, avail, "…"))
+			right := dimStyle.Render("next  ") + textStyle.Render(ansi.Truncate(next, avail, ellipsisFor(avail)))
 			if queue != "" {
 				right += faintStyle.Render("  ") + dimStyle.Render(queue)
 			}
@@ -847,7 +847,7 @@ func progressBar(progress float64, width int, enabled bool) string {
 		return ""
 	}
 	if !enabled {
-		return faintStyle.Render(strings.Repeat("─", width))
+		return faintStyle.Render(strings.Repeat(currentGlyphs.ProgressEmpty, width))
 	}
 	if progress < 0 {
 		progress = 0
@@ -864,10 +864,10 @@ func progressBar(progress float64, width int, enabled bool) string {
 	}
 	var b strings.Builder
 	if filled > 0 {
-		b.WriteString(accent2Style.Render(strings.Repeat("━", filled)))
+		b.WriteString(accent2Style.Render(strings.Repeat(currentGlyphs.ProgressFull, filled)))
 	}
 	if filled < width {
-		b.WriteString(faintStyle.Render(strings.Repeat("─", width-filled)))
+		b.WriteString(faintStyle.Render(strings.Repeat(currentGlyphs.ProgressEmpty, width-filled)))
 	}
 	return b.String()
 }
@@ -918,7 +918,7 @@ func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
 	return timeW + 1, barWidth
 }
 
-var volumePartials = []rune("▏▎▍▌▋▊▉")
+const volumeSteps = 7
 
 func volumeBar(volume, width int) string {
 	if width <= 0 {
@@ -934,15 +934,19 @@ func volumeBar(volume, width int) string {
 	// mouse resolves whole cells.
 	units := volume * width
 	full := units / 100
-	partial := (units % 100) * (len(volumePartials) + 1) / 100
+	partial := (units % 100) * (volumeSteps + 1) / 100
 	var b strings.Builder
-	b.WriteString(strings.Repeat("▮", full))
+	b.WriteString(strings.Repeat(currentGlyphs.VolumeFull, full))
 	empty := width - full
-	if empty > 0 && partial > 0 {
-		b.WriteRune(volumePartials[partial-1])
+	if empty > 0 && partial > 0 && len(currentGlyphs.VolumePartial) > 0 {
+		idx := partial - 1
+		if idx >= len(currentGlyphs.VolumePartial) {
+			idx = len(currentGlyphs.VolumePartial) - 1
+		}
+		b.WriteRune(currentGlyphs.VolumePartial[idx])
 		empty--
 	}
-	b.WriteString(strings.Repeat("▯", empty))
+	b.WriteString(strings.Repeat(currentGlyphs.VolumeEmpty, empty))
 	return b.String()
 }
 
@@ -951,13 +955,13 @@ func (m *Model) renderHints() string {
 	if m.searching {
 		return hintLine(
 			keyHint("type", "filter"),
-			keyHint("↑↓", "select"),
+			keyHint(currentGlyphs.UpDown, "select"),
 			keyHint("enter", "play"),
 			keyHint("esc", "clear"),
 		)
 	}
 	if m.selectionCount() > 0 {
-		if w >= 96 {
+		if w >= 96 && mouseHintAvailable() {
 			return hintLine(
 				keyHint("ctrl+click", "toggle"),
 				keyHint("drag", "to playlist"),
@@ -975,7 +979,7 @@ func (m *Model) renderHints() string {
 	if m.focus == focusSidebar {
 		if w >= 96 {
 			return hintLine(
-				keyHint("↑↓", "playlists"),
+				keyHint(currentGlyphs.UpDown, "playlists"),
 				keyHint("enter", "open"),
 				keyHint("tab", "tracks"),
 				keyHint("P", "new"),
@@ -987,7 +991,7 @@ func (m *Model) renderHints() string {
 		}
 		if w >= 72 {
 			return hintLine(
-				keyHint("↑↓", "move"),
+				keyHint(currentGlyphs.UpDown, "move"),
 				keyHint("enter", "open"),
 				keyHint("tab", "tracks"),
 				keyHint("P", "new"),
@@ -996,7 +1000,7 @@ func (m *Model) renderHints() string {
 			)
 		}
 		return hintLine(
-			keyHint("↑↓", "move"),
+			keyHint(currentGlyphs.UpDown, "move"),
 			keyHint("enter", "open"),
 			keyHint("tab", "tracks"),
 			keyHint("?", "help"),
@@ -1070,7 +1074,7 @@ func (m *Model) renderModalHints(w int) string {
 		)
 	case modalAddToPlaylist:
 		return hintLine(
-			keyHint("↑↓", "choose"),
+			keyHint(currentGlyphs.UpDown, "choose"),
 			keyHint("enter", "add"),
 			keyHint("esc", "cancel"),
 		)
@@ -1088,14 +1092,14 @@ func (m *Model) renderModalHints(w int) string {
 	case modalDownloads:
 		if w < 80 {
 			return hintLine(
-				keyHint("↑↓", "select"),
+				keyHint(currentGlyphs.UpDown, "select"),
 				keyHint("c", "cancel"),
 				keyHint("C", "clear"),
 				keyHint("esc", "close"),
 			)
 		}
 		return hintLine(
-			keyHint("↑↓", "select"),
+			keyHint(currentGlyphs.UpDown, "select"),
 			keyHint("c", "cancel"),
 			keyHint("C", "clear finished"),
 			keyHint("a", "add link"),
@@ -1103,7 +1107,7 @@ func (m *Model) renderModalHints(w int) string {
 		)
 	case modalHelp:
 		return hintLine(
-			keyHint("↑↓", "scroll"),
+			keyHint(currentGlyphs.UpDown, "scroll"),
 			keyHint("esc", "close"),
 			keyHint("?", "close"),
 		)
@@ -1112,7 +1116,10 @@ func (m *Model) renderModalHints(w int) string {
 }
 
 func (m *Model) renderLoading(w, h int) string {
-	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	frames := currentGlyphs.Spinner
+	if len(frames) == 0 {
+		frames = []rune("|/-\\")
+	}
 	frame := frames[m.spinner%len(frames)]
 
 	logo := gradientText(iconLogo+" xngxltuiplayer", colAccent, colAccent2)
@@ -1124,7 +1131,7 @@ func (m *Model) renderLoading(w, h int) string {
 			hintLine(keyHint("r", "retry"), keyHint("q", "quit"))
 	} else {
 		body = logo + "\n\n" +
-			accent2Style.Render(string(frame)) + "  " + textStyle.Render("Scanning your library…") + "\n\n" +
+			accent2Style.Render(string(frame)) + "  " + textStyle.Render("Scanning your library"+currentGlyphs.Ellipsis) + "\n\n" +
 			dimStyle.Render(truncateText(cleanText(m.cfg.MusicDir), maxInt(20, w-12))) + "\n" +
 			dimStyle.Render("The first scan may take a moment.")
 	}
@@ -1134,7 +1141,7 @@ func (m *Model) renderLoading(w, h int) string {
 func (m *Model) renderTooSmall(w, h int) string {
 	body := gradientText(iconLogo+" xngxltuiplayer", colAccent, colAccent2) + "\n\n" +
 		textStyle.Render("Terminal too small") + "\n" +
-		dimStyle.Render(fmt.Sprintf("%d×%d — need at least 54×16", w, h))
+		dimStyle.Render(fmt.Sprintf("%dx%d - need at least 54x16", w, h))
 	return placeBlock(body, w, h)
 }
 
@@ -1157,7 +1164,7 @@ func fitLineEllipsis(s string, width int) string {
 		return ""
 	}
 	if ansi.StringWidth(s) > width {
-		s = ansi.Truncate(s, width, "…")
+		s = ansi.Truncate(s, width, ellipsisFor(width))
 	}
 	if gap := width - ansi.StringWidth(s); gap > 0 {
 		s += strings.Repeat(" ", gap)
