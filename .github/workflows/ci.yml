@@ -71,11 +71,26 @@ jobs:
       - name: Version
         run: ./xngxltuiplayer --version
 
-      - name: Upload Linux binary
+      - name: Package Linux archive
+        run: |
+          set -euo pipefail
+          stage="dist/linux"
+          mkdir -p "$stage"
+          cp xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json "$stage/"
+          tar -C "$stage" -czf "$PWD/dist/xngxltuiplayer-ci-linux-amd64.tar.gz" \
+            xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json
+          cd dist
+          sha256sum xngxltuiplayer-ci-linux-amd64.tar.gz > xngxltuiplayer-ci-linux-amd64.tar.gz.sha256
+          ls -lh
+
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: xngxltuiplayer-linux-amd64
-          path: xngxltuiplayer
+          path: |
+            xngxltuiplayer
+            dist/xngxltuiplayer-ci-linux-amd64.tar.gz
+            dist/xngxltuiplayer-ci-linux-amd64.tar.gz.sha256
           if-no-files-found: error
 
   vulncheck:
