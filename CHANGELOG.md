@@ -4,7 +4,7 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — по
 [Semantic Versioning](https://semver.org/lang/ru/).
 
-## 0.2.1 — в разработке
+## 0.2.1 — 2026-10-27
 
 ### Исправлено
 
