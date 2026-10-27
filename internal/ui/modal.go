@@ -65,7 +65,7 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 		"",
 	}
 	if m.modalErr != "" {
-		lines = append(lines, errorStyle.Render(truncateText(m.modalErr, innerW)))
+		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
 	} else {
 		lines = append(lines, dimStyle.Render("The file is saved to your music folder as MP3."))
 	}
@@ -93,7 +93,7 @@ func (m *Model) renderM3UModal(w, contentH int) string {
 		"",
 	}
 	if m.modalErr != "" {
-		lines = append(lines, errorStyle.Render(truncateText(m.modalErr, innerW)))
+		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
 	} else {
 		lines = append(lines, dimStyle.Render("Relative paths are resolved against the music folder."))
 	}
@@ -112,7 +112,7 @@ func (m *Model) renderNewPlaylistModal(w, contentH int) string {
 		"",
 	}
 	if m.modalErr != "" {
-		lines = append(lines, errorStyle.Render(truncateText(m.modalErr, innerW)))
+		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
 	} else {
 		lines = append(lines, dimStyle.Render("Up to 48 characters. Names are case-insensitive."))
 	}
@@ -138,7 +138,7 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 		offset = m.modalCursor - rows + 1
 	}
 
-	header := dimStyle.Render("Track  ") + titleStyle.Render(truncateText(m.pendingTrack.DisplayTitle(), maxInt(8, innerW-7)))
+	header := dimStyle.Render("Track  ") + titleStyle.Render(truncateText(cleanText(m.pendingTrack.DisplayTitle()), maxInt(8, innerW-7)))
 	if len(m.pendingPaths) > 1 {
 		header = dimStyle.Render("Tracks  ") + titleStyle.Render(fmt.Sprintf("%d selected", len(m.pendingPaths)))
 	}
@@ -166,7 +166,7 @@ func (m *Model) renderAddToPlaylistModal(w, contentH int) string {
 		case contained > 0:
 			mark = "◐"
 		}
-		left := cursor + " " + mark + " " + pl.Name
+		left := cursor + " " + mark + " " + cleanText(pl.Name)
 		right := fmt.Sprintf("%d", len(pl.Tracks))
 		if len(m.pendingPaths) > 0 && contained == len(m.pendingPaths) {
 			right = "✓ " + right
@@ -196,7 +196,7 @@ func (m *Model) renderRemoveFromPlaylistModal(w, contentH int) string {
 	count := len(m.deleteTracks)
 	height := modalHeight(contentH, 10+minInt(maxInt(count, 1), 5))
 
-	playlist := m.view
+	playlist := cleanText(m.view)
 	if playlist == "" {
 		playlist = "this playlist"
 	}
@@ -210,7 +210,7 @@ func (m *Model) renderRemoveFromPlaylistModal(w, contentH int) string {
 	}
 	shown := minInt(count, 5)
 	for i := 0; i < shown; i++ {
-		lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(m.deleteTracks[i].DisplayTitle(), maxInt(8, innerW-2))))
+		lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(cleanText(m.deleteTracks[i].DisplayTitle()), maxInt(8, innerW-2))))
 	}
 	if count > shown {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more", count-shown)))
@@ -239,7 +239,7 @@ func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 		if count == 1 {
 			t = m.deleteTracks[0]
 		}
-		title := t.DisplayTitle()
+		title := cleanText(t.DisplayTitle())
 		if title == "" {
 			title = "this track"
 		}
@@ -247,8 +247,8 @@ func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 			warningStyle.Render(iconDelete + " This permanently deletes the audio file from disk."),
 			"",
 			titleStyle.Render(truncateText(title, innerW)),
-			accent2Style.Render(truncateText(t.DisplayArtist(), innerW)),
-			dimStyle.Render("file  ") + textStyle.Render(truncateText(filepath.Base(t.Path), maxInt(8, innerW-6))),
+			accent2Style.Render(truncateText(cleanText(t.DisplayArtist()), innerW)),
+			dimStyle.Render("file  ") + textStyle.Render(truncateText(cleanText(filepath.Base(t.Path)), maxInt(8, innerW-6))),
 			"",
 			textStyle.Render("It will also be removed from every playlist."),
 			"",
@@ -263,7 +263,7 @@ func (m *Model) renderDeleteTrackModal(w, contentH int) string {
 		shown := minInt(count, 5)
 		for i := 0; i < shown; i++ {
 			t := m.deleteTracks[i]
-			lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(t.DisplayTitle(), maxInt(8, innerW-2))))
+			lines = append(lines, dimStyle.Render("· ")+textStyle.Render(truncateText(cleanText(t.DisplayTitle()), maxInt(8, innerW-2))))
 		}
 		if count > shown {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("  …and %d more", count-shown)))
@@ -283,7 +283,7 @@ func (m *Model) renderDeletePlaylistModal(w, contentH int) string {
 	innerW := width - 4
 	height := modalHeight(contentH, 9)
 
-	name := m.deletePlaylist
+	name := cleanText(m.deletePlaylist)
 	if name == "" {
 		name = "this playlist"
 	}

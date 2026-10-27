@@ -14,7 +14,8 @@ import (
 
 // View implements tea.Model.
 func (m *Model) View() string {
-	return paintBackground(m.renderView(), colBg)
+	w, h := m.dims()
+	return paintBackground(sanitizeFrame(m.renderView(), w, h), colBg)
 }
 
 func (m *Model) renderView() string {
@@ -209,7 +210,7 @@ func (m *Model) renderCenter(width, height int) string {
 
 	title := m.viewLabel()
 	if m.search != "" {
-		title += " · /" + truncateText(m.search, 24)
+		title += " · /" + truncateText(cleanText(m.search), 24)
 	}
 	return renderBox(title, lines, width, height, colFaint, colAccent)
 }
@@ -221,7 +222,7 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 		switch {
 		case m.search != "":
 			message = []string{
-				"No tracks match " + truncateText("\""+m.search+"\"", maxInt(10, width-16)),
+				"No tracks match " + truncateText("\""+cleanText(m.search)+"\"", maxInt(10, width-16)),
 				"Press esc to clear the search.",
 			}
 		case m.view == viewFavorites:
@@ -337,19 +338,20 @@ func (m *Model) renderRightPane(width, height int) string {
 		lines = append(lines, centerLine(titleStyle.Render("Nothing playing"), innerW))
 		lines = append(lines, centerLine(dimStyle.Render("Select a track and press enter"), innerW))
 	} else {
-		titleLines := wrapText(m.current.DisplayTitle(), innerW, 2)
+		titleLines := wrapText(cleanText(m.current.DisplayTitle()), innerW, 2)
 		for _, line := range titleLines {
 			lines = append(lines, titleStyle.Render(line))
 		}
-		lines = append(lines, accent2Style.Render(truncateText(m.current.DisplayArtist(), innerW)))
-		album := m.current.DisplayAlbum()
-		if y := strings.TrimSpace(m.current.Year); y != "" {
+		lines = append(lines, accent2Style.Render(truncateText(cleanText(m.current.DisplayArtist()), innerW)))
+		album := cleanText(m.current.DisplayAlbum())
+		if y := strings.TrimSpace(cleanText(m.current.Year)); y != "" {
 			album += " · " + y
 		}
 		ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(m.current.Path), "."))
 		if ext == "" {
 			ext = "AUDIO"
 		}
+		ext = cleanText(ext)
 		if strings.TrimSpace(album) != "" {
 			album += " · " + ext
 		} else {
@@ -443,8 +445,8 @@ func (m *Model) renderCover(w, h int) string {
 	icon := "■"
 	iconStyle := faintStyle
 	if m.current != nil {
-		title = m.current.DisplayTitle()
-		if artist := strings.TrimSpace(m.current.Artist); artist != "" {
+		title = cleanText(m.current.DisplayTitle())
+		if artist := strings.TrimSpace(cleanText(m.current.Artist)); artist != "" {
 			title += " — " + artist
 		}
 		icon = iconPause
@@ -664,7 +666,7 @@ func (m *Model) playerNowText() string {
 			icon = iconPause
 		}
 		iconStyle = accent2Style
-		text = titleStyle.Render(m.current.DisplayTitle())
+		text = titleStyle.Render(cleanText(m.current.DisplayTitle()))
 	}
 	return iconStyle.Render(icon) + " " + text
 }
@@ -673,7 +675,7 @@ func (m *Model) playerArtistLine(innerW int) string {
 	if m.current == nil {
 		return fitLineEllipsis("  "+dimStyle.Render("select a track and press enter"), innerW)
 	}
-	return fitLineEllipsis("  "+dimStyle.Render(m.current.DisplayArtist()), innerW)
+	return fitLineEllipsis("  "+dimStyle.Render(cleanText(m.current.DisplayArtist())), innerW)
 }
 
 // volumeGroup returns the right-aligned volume widget and the bar offsets
@@ -835,7 +837,7 @@ func (m *Model) peekNextTitle() string {
 		idx = 0
 	}
 	if t, ok := m.findTrack(m.queue[idx]); ok {
-		return t.DisplayTitle()
+		return cleanText(t.DisplayTitle())
 	}
 	return ""
 }
@@ -1118,12 +1120,12 @@ func (m *Model) renderLoading(w, h int) string {
 	if m.loadErr != nil {
 		body = logo + "\n\n" +
 			errorStyle.Render("Could not load the library") + "\n\n" +
-			dimStyle.Render(truncateText(m.loadErr.Error(), maxInt(20, w-12))) + "\n\n" +
+			dimStyle.Render(truncateText(cleanText(m.loadErr.Error()), maxInt(20, w-12))) + "\n\n" +
 			hintLine(keyHint("r", "retry"), keyHint("q", "quit"))
 	} else {
 		body = logo + "\n\n" +
 			accent2Style.Render(string(frame)) + "  " + textStyle.Render("Scanning your library…") + "\n\n" +
-			dimStyle.Render(truncateText(m.cfg.MusicDir, maxInt(20, w-12))) + "\n" +
+			dimStyle.Render(truncateText(cleanText(m.cfg.MusicDir), maxInt(20, w-12))) + "\n" +
 			dimStyle.Render("The first scan may take a moment.")
 	}
 	return placeBlock(body, w, h)
@@ -1206,4 +1208,81 @@ func placeBlock(block string, width, height int) string {
 		out[row] = fitLine(strings.Repeat(" ", left)+line, width)
 	}
 	return strings.Join(out, "\n")
+}
+
+// sanitizeFrame is the last line of defence before Bubble Tea writes to the
+// terminal. It keeps ANSI styles, converts invalid UTF-8, replaces tabs and
+// other control characters, clips every line to the terminal width and makes
+// sure the frame has exactly the expected number of rows. A broken badge or
+// error message can therefore never wrap the whole UI.
+func sanitizeFrame(view string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	out := make([]string, height)
+	for i := range out {
+		line := ""
+		if i < len(lines) {
+			line = sanitizeANSIText(lines[i])
+		}
+		line = ansi.Truncate(line, width, "")
+		if gap := width - ansi.StringWidth(line); gap > 0 {
+			line += strings.Repeat(" ", gap)
+		}
+		out[i] = line
+	}
+	return strings.Join(out, "\n")
+}
+
+// sanitizeANSIText removes control characters while preserving CSI/OSC escape
+// sequences used by lipgloss for colours and backgrounds.
+func sanitizeANSIText(s string) string {
+	s = strings.ToValidUTF8(s, "?")
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == 0x1b {
+			start := i
+			i++
+			switch {
+			case i < len(s) && s[i] == '[':
+				i++
+				for i < len(s) && s[i] >= 0x20 && s[i] <= 0x3f {
+					i++
+				}
+				if i < len(s) && s[i] >= 0x40 && s[i] <= 0x7e {
+					i++
+				}
+			case i < len(s) && s[i] == ']':
+				i++
+				for i < len(s) {
+					if s[i] == 0x07 {
+						i++
+						break
+					}
+					if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+			case i < len(s):
+				i++
+			}
+			b.WriteString(s[start:i])
+			continue
+		}
+		if c < 0x20 || c == 0x7f {
+			if c == '\t' || c == '\r' {
+				b.WriteByte(' ')
+			}
+			i++
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
 }
