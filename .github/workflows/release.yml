@@ -37,7 +37,7 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/xngxltuiplayer.exe" .
           if ($LASTEXITCODE -ne 0) { throw "go build failed" }
 
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, discord.example.json, uninstall_xngxltuiplayer.ps1, uninstall_xngxltuiplayer.bat -Destination $stage
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, discord.example.json, install_xngxltuiplayer.ps1, install_xngxltuiplayer.bat, uninstall_xngxltuiplayer.ps1, uninstall_xngxltuiplayer.bat -Destination $stage
           & "$stage/xngxltuiplayer.exe" --version
 
           $name = "xngxltuiplayer-$version-windows-amd64.zip"
@@ -57,10 +57,20 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
           $zip = "dist/xngxltuiplayer-$version-windows-amd64.zip"
-          gh release create $env:GITHUB_REF_NAME $zip "$zip.sha256" `
-            --title "xngxltuiplayer $version" `
-            --generate-notes `
-            --verify-tag
+          $notes = "release-notes/$version.md"
+          $args = @(
+            $env:GITHUB_REF_NAME,
+            $zip,
+            "$zip.sha256",
+            "--title", "xngxltuiplayer $version",
+            "--verify-tag"
+          )
+          if (Test-Path -LiteralPath $notes) {
+            $args += @("--notes-file", $notes)
+          } else {
+            $args += "--generate-notes"
+          }
+          gh release create @args
 
   linux:
     needs: windows

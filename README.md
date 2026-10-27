@@ -28,31 +28,48 @@ enter play · space pause · / search · a add link · P playlist · x add · ? 
 Готовые сборки лежат в
 [Releases](https://github.com/maximowivan/xngxltuiplayer/releases).
 
-1. Скачайте последний `xngxltuiplayer-v*-windows-amd64.zip` из Releases и
-   распакуйте в папку, куда у вас есть запись: Desktop, Downloads, `D:\...`.
-   Не распаковывайте в `C:\Program Files` — рядом с exe создаются `music\` и
-   `data\`.
-2. Запустите `xngxltuiplayer.exe` обычным двойным кликом. Администратор не нужен.
-3. Windows может показать SmartScreen, потому что exe не подписан:
-   `Подробнее` → `Выполнить всё равно`.
-4. Рекомендуется Windows Terminal: он даёт truecolor и поддержку мыши. Если
-   Unicode-иконки не отображаются, запустите `xngxltuiplayer.exe -ascii`.
-5. Для скачивания треков нужны `yt-dlp` и `ffmpeg` в `PATH`. Для прослушивания
-   уже скачанных файлов они не нужны:
+### Windows: установщик
+
+1. Скачайте `xngxltuiplayer-v*-windows-amd64.zip` из Releases и распакуйте
+   в любую папку, куда у вас есть запись.
+2. Запустите `install_xngxltuiplayer.bat`.
+3. Нажмите `Enter`, чтобы поставить в
+   `%LOCALAPPDATA%\Programs\xngxltuiplayer`, или введите свою папку,
+   например `D:\Apps\xngxltuiplayer`.
+4. Установщик берёт файлы из распакованного архива. Если запустить только
+   скрипт без `xngxltuiplayer.exe` рядом, он скачает последний релиз с GitHub
+   и проверит SHA256.
+5. `yt-dlp` и `ffmpeg` ставятся через winget, если их нет. Для обычной
+   установки администратор не нужен; winget может запросить UAC для ffmpeg.
+6. Создаются ярлыки на рабочем столе и в меню «Пуск» для текущего
+   пользователя, через Windows Terminal если он установлен.
+7. Создаётся uninstaller и запись в «Программах и компонентах».
+8. Музыка и `data\` при обновлении сохраняются.
+
+Если Windows покажет SmartScreen для `.bat`/`.exe`, выберите
+`Подробнее` → `Выполнить всё равно`: исполняемые файлы не подписаны.
+
+### Windows: портативно
+
+Можно не устанавливать, а запускать `xngxltuiplayer.exe` прямо из
+распакованной папки. Тогда ярлыки и запись в реестре не создаются, а
+`music\` и `data\` лежат рядом с exe. Не используйте для этого
+`C:\Program Files` — там нет прав на запись.
+
+Проверка и обновление:
 
 ```powershell
-winget install yt-dlp.yt-dlp
-winget install Gyan.FFmpeg
+.\xngxltuiplayer.exe --check
+.\xngxltuiplayer.exe --version
+.\xngxltuiplayer.exe --update
 ```
 
-6. Проверка окружения: `.\xngxltuiplayer.exe --check`. Версия:
-   `.\xngxltuiplayer.exe --version`.
-7. Обновление до последнего релиза:
-   `.\xngxltuiplayer.exe --update` — скачает архив, проверит SHA256,
-   заменит exe и перезапустит плеер. Музыка и `data\` не затрагиваются.
-8. Удаление: запустите `uninstall_xngxltuiplayer.bat` из папки установки или
-   выберите `xngxltuiplayer` в «Программах и компонентах». Музыка и `data\`
-   сохраняются, если не подтвердить их удаление отдельно.
+`--update` скачает последний релиз, проверит SHA256, заменит exe и
+перезапустит плеер; `music\` и `data\` не затрагиваются.
+
+Удаление установленной копии: `uninstall_xngxltuiplayer.bat` в папке
+установки или `xngxltuiplayer` в «Программах и компонентах». Музыка и
+`data\` сохраняются, если не подтвердить их удаление отдельно.
 
 ### Linux
 
@@ -396,20 +413,26 @@ Night, Gruvbox, Nord, Dracula, Rosé Pine Moon и Ember. Тема заливае
 Плеер может показывать в Discord статус «Listening» с названием трека,
 исполнителем, альбомом, таймером, состоянием паузы и обложкой.
 
-1. Создайте приложение на
-   [Discord Developer Portal](https://discord.com/developers/applications)
-   и скопируйте **Application ID**.
-2. Запустите плеер с этим ID:
+Rich Presence включён по умолчанию с публичным Application ID
+`1563968728352161852` — создавать своё приложение и что-то настраивать не
+нужно. Application ID не является секретом: он только определяет, под каким
+именем и с какими ассетами Discord показывает активность. Не публикуйте
+`client_secret` и токен бота — они для Rich Presence не нужны.
 
+1. Запустите Discord для Windows. Плеер сам подключится к локальному IPC и
+   будет переподключаться, если Discord запустится позже.
+2. Если нужен свой Application ID, запустите:
    ```powershell
    .\xngxltuiplayer.exe -discord 123456789012345678
    ```
-
-   Application ID сохранится в `data\discord.json`, и флаг больше не понадобится.
-   Либо скопируйте `discord.example.json` в `data\discord.json` и укажите
-   `client_id` там. В `enabled` должно быть `true`.
-3. Запустите Discord для Windows. Плеер сам подключится к локальному IPC и
-   будет переподключаться, если Discord запустится позже.
+   ID сохранится в `data\discord.json`, и флаг больше не понадобится.
+3. Чтобы отключить интеграцию, создайте `data\discord.json`:
+   ```json
+   {
+     "enabled": false
+   }
+   ```
+   Шаблон с публичным ID лежит в `discord.example.json`.
 
 `fallback_image` — необязательный ключ ассета из Discord-приложения или
 публичный URL картинки на случай, если обложку трека найти не удалось.
@@ -559,6 +582,7 @@ internal/
   ui/                       Bubble Tea: model/update/view, модальные окна
   updater/                  скачивание и установка релиза
 discord.example.json        шаблон Discord Rich Presence
+install_xngxltuiplayer.*     установщик для текущего пользователя
 uninstall_xngxltuiplayer.*   удаление для текущего пользователя
 build.ps1, build.bat        сборка
 setup.ps1                   установка инструментов и сборка
@@ -639,7 +663,7 @@ Discord. Свой статус виден в поповере профиля (к
 Запускайте ярлык обычным способом или откройте вручную:
 
 ```powershell
-wt.exe -d "A:\tuiplay" "A:\tuiplay\xngxltuiplayer.exe"
+wt.exe -d "D:\Apps\xngxltuiplayer" "D:\Apps\xngxltuiplayer\xngxltuiplayer.exe"
 ```
 
 Проверить режим: `.\xngxltuiplayer.exe --check`, раздел `Terminal`.

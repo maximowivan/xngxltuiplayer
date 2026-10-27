@@ -37,6 +37,38 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigEnablesPresence(t *testing.T) {
+	cfg := Load(t.TempDir())
+	if !cfg.Enabled || cfg.ClientID != DefaultClientID || !cfg.Configured() {
+		t.Fatalf("default config = %+v", cfg)
+	}
+}
+
+func TestDisabledConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "discord.json"), []byte(`{"enabled":false,"client_id":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Load(dir)
+	if cfg.Enabled || cfg.Configured() {
+		t.Fatalf("disabled config = %+v", cfg)
+	}
+	if cfg.ClientID != "" {
+		t.Fatalf("disabled config should keep an empty client id, got %q", cfg.ClientID)
+	}
+}
+
+func TestEmptyClientIDUsesDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "discord.json"), []byte(`{"enabled":true,"client_id":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Load(dir)
+	if cfg.ClientID != DefaultClientID || !cfg.Configured() {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
 func TestBuildActivity(t *testing.T) {
 	c := &Client{cfg: Config{ActivityType: 2}}
 	playing := c.buildActivity(Activity{

@@ -1,6 +1,6 @@
 {
-  "enabled": false,
-  "client_id": "",
+  "enabled": true,
+  "client_id": "1563968728352161852",
   "fallback_image": "",
   "activity_type": 2
 }

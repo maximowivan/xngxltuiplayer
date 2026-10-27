@@ -10,6 +10,11 @@ import (
 	"tuiplay/internal/atomicfile"
 )
 
+// DefaultClientID is the public Discord application used for Rich Presence
+// when the user has no discord.json. Application IDs are not secrets; they only
+// identify the Discord app whose name and assets are shown.
+const DefaultClientID = "1563968728352161852"
+
 // Config controls the Discord integration.
 type Config struct {
 	Enabled       bool   `json:"enabled"`
@@ -20,19 +25,34 @@ type Config struct {
 	dataDir string
 }
 
-// Load reads data/discord.json. A missing or invalid file disables presence.
+// Load reads data/discord.json. Without a config file the public default
+// application is enabled, so Rich Presence works out of the box. Set
+// "enabled": false in data/discord.json to opt out.
 func Load(dataDir string) Config {
 	cfg := Config{dataDir: dataDir}
-	if err := atomicfile.ReadJSON(filepath.Join(dataDir, "discord.json"), &cfg); err != nil {
-		return Config{dataDir: dataDir}
+	path := filepath.Join(dataDir, "discord.json")
+	if err := atomicfile.ReadJSON(path, &cfg); err != nil {
+		return defaultConfig(dataDir)
 	}
 	cfg.dataDir = dataDir
 	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
 	cfg.FallbackImage = strings.TrimSpace(cfg.FallbackImage)
+	if cfg.ClientID == "" && cfg.Enabled {
+		cfg.ClientID = DefaultClientID
+	}
 	if cfg.ActivityType <= 0 || cfg.ActivityType > 5 {
 		cfg.ActivityType = 2
 	}
 	return cfg
+}
+
+func defaultConfig(dataDir string) Config {
+	return Config{
+		Enabled:      true,
+		ClientID:     DefaultClientID,
+		ActivityType: 2,
+		dataDir:      dataDir,
+	}
 }
 
 // Save writes data/discord.json atomically.
