@@ -74,8 +74,8 @@ func main() {
 	tools := download.FindTools()
 	termInfo := terminal.Detect()
 	asciiMode := resolveASCIITerminal(iconMode, termInfo)
-	applog.Printf("terminal=%s elevated=%v font=%q cp=%d unicode=%v ascii=%v",
-		termInfo.Program, termInfo.Elevated, termInfo.FontFace, termInfo.OutputCP, termInfo.Unicode, asciiMode)
+	applog.Printf("terminal=%s elevated=%v font=%q cp=%d console=%q unicode=%v ascii=%v",
+		termInfo.Program, termInfo.Elevated, termInfo.FontFace, termInfo.OutputCP, termInfo.ConsoleClass, termInfo.Unicode, asciiMode)
 
 	presenceCfg := presence.Load(cfg.DataDir)
 	if id := strings.TrimSpace(*discordID); id != "" {

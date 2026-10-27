@@ -18,6 +18,7 @@ type Info struct {
 	FontFace        string
 	FontSize        int
 	OutputCP        uint32
+	ConsoleClass    string
 	TrueColor       bool
 	Unicode         bool
 }
@@ -26,12 +27,32 @@ type Info struct {
 func Detect() Info {
 	info := Info{Program: detectProgram()}
 	info.WindowsTerminal = os.Getenv("WT_SESSION") != ""
-	info.ConHost = runtime.GOOS == "windows" && !info.WindowsTerminal && info.Program == "Windows console (conhost)"
 
-	info.Elevated, info.FontFace, info.FontSize, info.OutputCP = platformInfo()
+	info.Elevated, info.FontFace, info.FontSize, info.OutputCP, info.ConsoleClass = platformInfo()
+	classifyConsole(&info)
 	info.TrueColor = detectTrueColor(info)
 	info.Unicode = detectUnicode(info)
 	return info
+}
+
+// classifyConsole distinguishes a real conhost window from the hidden
+// pseudoconsole window used when Windows Terminal is the default terminal.
+func classifyConsole(info *Info) {
+	if info.ConsoleClass != "" {
+		lower := strings.ToLower(info.ConsoleClass)
+		switch {
+		case strings.Contains(lower, "pseudo"):
+			info.WindowsTerminal = true
+			if info.Program == "Windows console (conhost)" {
+				info.Program = "Windows Terminal (pseudoconsole)"
+			}
+		case strings.Contains(lower, "consolewindow"):
+			info.ConHost = true
+		}
+	}
+	if !info.ConHost && info.Program == "Windows console (conhost)" && !info.WindowsTerminal {
+		info.ConHost = true
+	}
 }
 
 // UseASCII reports whether the player should fall back to plain-text icons.
@@ -65,6 +86,9 @@ func (i Info) Summary() []string {
 	}
 	if i.OutputCP != 0 {
 		lines = append(lines, fmt.Sprintf("  output CP    %d", i.OutputCP))
+	}
+	if i.ConsoleClass != "" {
+		lines = append(lines, fmt.Sprintf("  console      %s", i.ConsoleClass))
 	}
 	lines = append(lines,
 		fmt.Sprintf("  truecolor    %s", yesNo(i.TrueColor)),
@@ -133,11 +157,14 @@ func detectTrueColor(i Info) bool {
 }
 
 func detectUnicode(i Info) bool {
-	if i.ConHost {
-		return false
-	}
 	if runtime.GOOS != "windows" {
 		return true
+	}
+	if i.WindowsTerminal {
+		return true
+	}
+	if i.ConHost {
+		return false
 	}
 	switch strings.ToLower(i.Program) {
 	case "windows terminal", "vs code terminal", "wezterm", "alacritty", "kitty", "conemu", "mintty":

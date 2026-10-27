@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -47,5 +48,41 @@ func TestSummaryMentionsProgram(t *testing.T) {
 	lines := strings.Join((Info{Program: "Windows Terminal", Unicode: true}).Summary(), "\n")
 	if !strings.Contains(lines, "Windows Terminal") {
 		t.Fatalf("summary does not mention the program: %s", lines)
+	}
+}
+
+func TestClassifyPseudoConsole(t *testing.T) {
+	info := Info{Program: "Windows console (conhost)", ConsoleClass: "PseudoConsoleWindow"}
+	classifyConsole(&info)
+	if info.ConHost {
+		t.Fatal("pseudoconsole must not be treated as conhost")
+	}
+	if !info.WindowsTerminal {
+		t.Fatal("pseudoconsole should count as Windows Terminal")
+	}
+	if info.Program != "Windows Terminal (pseudoconsole)" {
+		t.Fatalf("program = %q", info.Program)
+	}
+	if runtime.GOOS == "windows" && !detectUnicode(info) {
+		t.Fatal("pseudoconsole should support Unicode")
+	}
+}
+
+func TestClassifyConHost(t *testing.T) {
+	info := Info{Program: "Windows console (conhost)", ConsoleClass: "ConsoleWindowClass"}
+	classifyConsole(&info)
+	if !info.ConHost {
+		t.Fatal("ConsoleWindowClass should be treated as conhost")
+	}
+	if runtime.GOOS == "windows" && detectUnicode(info) {
+		t.Fatal("conhost should not be Unicode by default")
+	}
+}
+
+func TestClassifyUnknownConHost(t *testing.T) {
+	info := Info{Program: "Windows console (conhost)"}
+	classifyConsole(&info)
+	if !info.ConHost {
+		t.Fatal("unknown windows host should fall back to conhost")
 	}
 }

@@ -20,14 +20,38 @@ type consoleFontInfoEx struct {
 
 var (
 	kernel32                    = windows.NewLazySystemDLL("kernel32.dll")
+	user32                      = windows.NewLazySystemDLL("user32.dll")
 	procGetCurrentConsoleFontEx = kernel32.NewProc("GetCurrentConsoleFontEx")
+	procGetConsoleWindow        = kernel32.NewProc("GetConsoleWindow")
+	procGetClassNameW           = user32.NewProc("GetClassNameW")
 )
 
-func platformInfo() (elevated bool, fontFace string, fontSize int, outputCP uint32) {
+func platformInfo() (elevated bool, fontFace string, fontSize int, outputCP uint32, consoleClass string) {
 	elevated = windows.GetCurrentProcessToken().IsElevated()
 	outputCP, _ = windows.GetConsoleOutputCP()
 	fontFace, fontSize = currentConsoleFont()
+	consoleClass = currentConsoleWindowClass()
 	return
+}
+
+func currentConsoleWindowClass() string {
+	if err := procGetConsoleWindow.Find(); err != nil {
+		return ""
+	}
+	handle, _, _ := procGetConsoleWindow.Call()
+	if handle == 0 {
+		return ""
+	}
+	var buf [256]uint16
+	n, _, _ := procGetClassNameW.Call(
+		handle,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
+	if n == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:n])
 }
 
 func currentConsoleFont() (string, int) {
