@@ -54,13 +54,31 @@ winget install Gyan.FFmpeg
    выберите `xngxltuiplayer` в «Программах и компонентах». Музыка и `data\`
    сохраняются, если не подтвердить их удаление отдельно.
 
+### Linux
+
+1. Скачайте `xngxltuiplayer-v*-linux-amd64.tar.gz` из Releases и распакуйте:
+   ```bash
+   tar -xzf xngxltuiplayer-v*-linux-amd64.tar.gz
+   ```
+2. Запустите:
+   ```bash
+   ./xngxltuiplayer --check
+   ./xngxltuiplayer
+   ```
+3. Нужен работающий ALSA/PulseAudio/PipeWire и терминал с Unicode, truecolor и
+   поддержкой мыши. `libasound2` обычно уже установлен; для сборки из исходников
+   нужен `libasound2-dev`.
+4. `--update` и uninstaller — только для Windows. На Linux обновляйтесь,
+   распаковывая новый архив; `music/` и `data/` лежат рядом с бинарником и не
+   затрагиваются.
+
 Музыку можно сразу положить в `music\` или добавить по ссылке клавишей `a`.
 Папки `music\` и `data\` создаются при первом запуске.
 
 ## Возможности
 
-- **Офлайн-воспроизведение** MP3, FLAC и WAV через чистый Go (beep + oto), без
-  CGO и внешних плееров.
+- **Офлайн-воспроизведение** MP3, FLAC и WAV через beep + oto; на Windows и
+  macOS без CGO, на Linux — через ALSA/CGO.
 - **Скачивание по ссылке**: Spotify (отдельный трек), SoundCloud (отдельный
   трек), YouTube, прямые ссылки на аудио и страницы, которые понимает
   `yt-dlp`.
@@ -114,20 +132,30 @@ winget install Gyan.FFmpeg
 
 ## Требования
 
-Для запуска готового `xngxltuiplayer.exe`:
+### Windows
 
-- Windows 10/11 (приложение также собирается под Linux и macOS).
+- Windows 10/11, Windows Terminal или другой терминал с Unicode, truecolor и
+  поддержкой мыши. Для терминалов без Unicode есть флаг `-ascii`.
 - Папка, куда у вас есть запись. Не запускайте из `C:\Program Files`: рядом с
   exe создаются `music\` и `data\`.
-- Windows Terminal или другой терминал с Unicode, truecolor и поддержкой мыши.
-  Для терминалов без Unicode есть флаг `-ascii`.
+
+### Linux
+
+- Linux amd64 (x86_64), ALSA или PulseAudio/PipeWire.
+- Терминал с Unicode, truecolor и поддержкой мыши (kitty, WezTerm, Alacritty,
+  GNOME Terminal и т. п.).
+- Для сборки из исходников: Go 1.27+, GCC/Clang и `libasound2-dev`
+  (Debian/Ubuntu) или `alsa-lib-devel` (Fedora).
+
+### Общее
+
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — только для скачивания.
 - [`ffmpeg`](https://ffmpeg.org/) — только для скачивания/конвертации и обложек.
 - `ffprobe` (обычно идёт вместе с ffmpeg) — длительность треков; без него
   плеер всё равно работает, но в списке может не быть длительности до первого
   воспроизведения.
 
-Установка через winget:
+Установка через winget (Windows):
 
 ```powershell
 winget install yt-dlp.yt-dlp
@@ -184,6 +212,7 @@ data\
 -ascii          текстовые подписи вместо Unicode-иконок
 -icons <mode>   auto, unicode или ascii; auto включает ASCII в conhost
 -update         скачать и установить последний релиз, затем перезапуститься
+                (только Windows)
 -discord <id>   включить Discord Rich Presence с Application ID
 -check          проверить окружение и выйти
 -version        показать версию
@@ -453,6 +482,8 @@ Night, Gruvbox, Nord, Dracula, Rosé Pine Moon и Ember. Тема заливае
 
 ## Сборка
 
+### Windows
+
 ```powershell
 go mod tidy
 go test ./...
@@ -476,14 +507,35 @@ go test ./...
 Скрипты используют `winget`, если `yt-dlp`/`ffmpeg` не найдены. После установки
 может понадобиться новый терминал.
 
-Кросс-компиляция:
+### Linux
 
-```powershell
-$env:GOOS="linux"; $env:GOARCH="amd64"; go build -trimpath -o xngxltuiplayer-linux .
+Нужны CGO и заголовки ALSA, потому что `oto` использует ALSA:
+
+```bash
+# Debian / Ubuntu
+sudo apt update
+sudo apt install -y build-essential libasound2-dev
+
+# Fedora
+# sudo dnf install -y gcc alsa-lib-devel
+
+# Arch
+# sudo pacman -S --needed base-devel alsa-lib
+
+CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=0.2.0" -o xngxltuiplayer .
+./xngxltuiplayer --check
+./xngxltuiplayer
 ```
 
-На Linux для вывода звука нужен ALSA/PulseAudio (oto использует системный
-аудиодвижок); на macOS — CoreAudio.
+Сборка с `CGO_ENABLED=0` на Linux не работает: `oto` не сможет подключиться к
+ALSA. Кросс-компиляция с Windows на Linux тоже требует Linux C-тулчейн, поэтому
+проще собирать на Linux или использовать готовый архив из Releases.
+
+На macOS `oto` работает через CoreAudio; сборка без CGO:
+
+```bash
+go build -trimpath -ldflags "-s -w -X main.version=0.2.0" -o xngxltuiplayer .
+```
 
 ## Структура проекта
 
@@ -620,6 +672,12 @@ wt.exe -d "A:\tuiplay" "A:\tuiplay\xngxltuiplayer.exe"
   картинку Discord не принимает.
 - Скачивайте только тот контент, на который у вас есть права. Приложение не
   обходит DRM и не предоставляет доступ к платному контенту.
+- Linux-архив собирается для amd64. Для ARM64 и других архитектур собирайте из
+  исходников.
+- `--update`, uninstaller и скрипты `build.ps1`/`setup.ps1` — только Windows.
+  На Linux обновление вручную, новым архивом.
+- Discord Rich Presence проверен на Windows. На Linux Unix-сокеты Discord
+  реализованы, но отдельно не тестировались.
 
 ## Лицензия
 

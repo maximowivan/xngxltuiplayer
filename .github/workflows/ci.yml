@@ -40,6 +40,44 @@ jobs:
       - name: Build Windows binary
         run: go build -trimpath -ldflags "-s -w -X main.version=ci" -o xngxltuiplayer.exe .
 
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 ./...
+
+      - name: Build Linux binary
+        run: go build -trimpath -ldflags "-s -w -X main.version=ci" -o xngxltuiplayer .
+
+      - name: Version
+        run: ./xngxltuiplayer --version
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: xngxltuiplayer-linux-amd64
+          path: xngxltuiplayer
+          if-no-files-found: error
+
   vulncheck:
     runs-on: windows-latest
     continue-on-error: true

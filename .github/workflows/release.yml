@@ -61,3 +61,52 @@ jobs:
             --title "xngxltuiplayer $version" `
             --generate-notes `
             --verify-tag
+
+  linux:
+    needs: windows
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build Linux archive
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          stage="dist/linux"
+          mkdir -p "$stage"
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/xngxltuiplayer" .
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json "$stage/"
+          archive="$PWD/dist/xngxltuiplayer-$version-linux-amd64.tar.gz"
+          tar -C "$stage" -czf "$archive" \
+            xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json
+          cd dist
+          sha256sum "xngxltuiplayer-$version-linux-amd64.tar.gz" > "xngxltuiplayer-$version-linux-amd64.tar.gz.sha256"
+          ls -lh
+
+      - name: Upload Linux asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" \
+            "dist/xngxltuiplayer-$version-linux-amd64.tar.gz" \
+            "dist/xngxltuiplayer-$version-linux-amd64.tar.gz.sha256" \
+            --clobber
