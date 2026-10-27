@@ -40,7 +40,7 @@ jobs:
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, discord.example.json, install_xngxltuiplayer.ps1, install_xngxltuiplayer.bat, uninstall_xngxltuiplayer.ps1, uninstall_xngxltuiplayer.bat -Destination $stage
           & "$stage/xngxltuiplayer.exe" --version
 
-          $name = "xngxltuiplayer-$version-windows-amd64.zip"
+          $name = "xngxltuiplayer-v$version-windows-amd64.zip"
           $zip = Join-Path "dist" $name
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -CompressionLevel Optimal
 
@@ -56,7 +56,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $zip = "dist/xngxltuiplayer-$version-windows-amd64.zip"
+          $zip = "dist/xngxltuiplayer-v$version-windows-amd64.zip"
           $notes = "release-notes/$version.md"
           $args = @(
             $env:GITHUB_REF_NAME,
@@ -103,11 +103,11 @@ jobs:
           mkdir -p "$stage"
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/xngxltuiplayer" .
           cp README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json "$stage/"
-          archive="$PWD/dist/xngxltuiplayer-$version-linux-amd64.tar.gz"
+          archive="$PWD/dist/xngxltuiplayer-v$version-linux-amd64.tar.gz"
           tar -C "$stage" -czf "$archive" \
             xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json
           cd dist
-          sha256sum "xngxltuiplayer-$version-linux-amd64.tar.gz" > "xngxltuiplayer-$version-linux-amd64.tar.gz.sha256"
+          sha256sum "xngxltuiplayer-v$version-linux-amd64.tar.gz" > "xngxltuiplayer-v$version-linux-amd64.tar.gz.sha256"
           ls -lh
 
       - name: Upload Linux asset
@@ -117,6 +117,6 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           gh release upload "$GITHUB_REF_NAME" \
-            "dist/xngxltuiplayer-$version-linux-amd64.tar.gz" \
-            "dist/xngxltuiplayer-$version-linux-amd64.tar.gz.sha256" \
+            "dist/xngxltuiplayer-v$version-linux-amd64.tar.gz" \
+            "dist/xngxltuiplayer-v$version-linux-amd64.tar.gz.sha256" \
             --clobber

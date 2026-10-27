@@ -30,6 +30,36 @@ func TestVersionParts(t *testing.T) {
 	}
 }
 
+func TestWindowsAssetsAcceptsBothNames(t *testing.T) {
+	rel := Release{Assets: []Asset{
+		{Name: "xngxltuiplayer-0.2.0-windows-amd64.zip", BrowserDownloadURL: "old"},
+		{Name: "xngxltuiplayer-0.2.0-windows-amd64.zip.sha256", BrowserDownloadURL: "old-sha"},
+		{Name: "xngxltuiplayer-v0.2.0-windows-amd64.zip", BrowserDownloadURL: "new"},
+		{Name: "xngxltuiplayer-v0.2.0-windows-amd64.zip.sha256", BrowserDownloadURL: "new-sha"},
+	}}
+	zip, sha, err := rel.WindowsAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zip.BrowserDownloadURL != "new" || sha.BrowserDownloadURL != "new-sha" {
+		t.Fatalf("v-prefixed assets should win: zip=%+v sha=%+v", zip, sha)
+	}
+}
+
+func TestWindowsAssetsAcceptsUnprefixedName(t *testing.T) {
+	rel := Release{Assets: []Asset{
+		{Name: "xngxltuiplayer-0.2.0-windows-amd64.zip", BrowserDownloadURL: "old"},
+		{Name: "xngxltuiplayer-0.2.0-windows-amd64.zip.sha256", BrowserDownloadURL: "old-sha"},
+	}}
+	zip, sha, err := rel.WindowsAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zip.Name == "" || sha.Name == "" {
+		t.Fatalf("unprefixed assets not found: zip=%+v sha=%+v", zip, sha)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	if got := sanitize("v0.2.0 beta"); got != "v0.2.0-beta" {
 		t.Fatalf("sanitize = %q", got)

@@ -69,12 +69,24 @@ func Latest(ctx context.Context) (Release, error) {
 }
 
 // WindowsAssets returns the zip and its .sha256 companion.
+// WindowsAssets returns the zip and its .sha256 companion. Both the current
+// v-prefixed asset names and older names without the "v" are accepted.
 func (r Release) WindowsAssets() (zip Asset, sha Asset, err error) {
+	var fallback Asset
 	for _, a := range r.Assets {
-		if strings.HasPrefix(a.Name, "xngxltuiplayer-v") && strings.HasSuffix(a.Name, "-windows-amd64.zip") {
+		if !strings.HasPrefix(a.Name, "xngxltuiplayer-") || !strings.HasSuffix(a.Name, "-windows-amd64.zip") {
+			continue
+		}
+		if strings.HasPrefix(a.Name, "xngxltuiplayer-v") {
 			zip = a
 			break
 		}
+		if fallback.Name == "" {
+			fallback = a
+		}
+	}
+	if zip.Name == "" {
+		zip = fallback
 	}
 	if zip.Name == "" {
 		return Asset{}, Asset{}, errors.New("release has no Windows amd64 zip")

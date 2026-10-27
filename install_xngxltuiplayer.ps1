@@ -245,7 +245,13 @@ try {
         } catch {
             Fail "GitHub API недоступен: $($_.Exception.Message). Скачайте архив вручную: https://github.com/maximowivan/xngxltuiplayer/releases"
         }
-        $asset = $release.assets | Where-Object { $_.name -match "^xngxltuiplayer-v.+windows-amd64\.zip$" } | Select-Object -First 1
+        $assets = @($release.assets | Where-Object {
+            $_.name -match "^xngxltuiplayer-(v?[0-9].*)-windows-amd64\.zip$"
+        })
+        $asset = $assets | Where-Object { $_.name -match "^xngxltuiplayer-v" } | Select-Object -First 1
+        if (-not $asset) {
+            $asset = $assets | Select-Object -First 1
+        }
         if (-not $asset) {
             Fail "В последнем релизе нет Windows-архива. Скачайте его вручную: https://github.com/maximowivan/xngxltuiplayer/releases"
         }
