@@ -14,6 +14,7 @@ func TestSaveLoad(t *testing.T) {
 		Shuffle:    true,
 		View:       "Road Trip",
 		Theme:      "nord",
+		Sort:       "album",
 		Track:      filepath.Join(dir, "a.mp3"),
 		PositionMS: 42000,
 	}
@@ -46,6 +47,7 @@ func TestDefaultsAndNormalization(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte("{broken"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	_ = os.Remove(filepath.Join(dir, "session.json.bak"))
 	if got := Load(dir); got != Default() {
 		t.Fatalf("invalid JSON should return defaults, got %+v", got)
 	}

@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build release archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $stage = "dist/stage"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/xngxltuiplayer.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, discord.example.json, uninstall_xngxltuiplayer.ps1, uninstall_xngxltuiplayer.bat -Destination $stage
+          & "$stage/xngxltuiplayer.exe" --version
+
+          $name = "xngxltuiplayer-$version-windows-amd64.zip"
+          $zip = Join-Path "dist" $name
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -CompressionLevel Optimal
+
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
+
+          Get-ChildItem dist | Select-Object Name, Length
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $zip = "dist/xngxltuiplayer-$version-windows-amd64.zip"
+          gh release create $env:GITHUB_REF_NAME $zip "$zip.sha256" `
+            --title "xngxltuiplayer $version" `
+            --generate-notes `
+            --verify-tag

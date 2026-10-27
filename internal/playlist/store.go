@@ -2,7 +2,6 @@
 package playlist
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"tuiplay/internal/atomicfile"
 )
 
 // Playlist is a named ordered collection of absolute track paths.
@@ -44,21 +45,24 @@ type Store struct {
 // Load reads playlists from dataDir. A missing file is not an error.
 func Load(dataDir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dataDir, "playlists.json")}
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
-	if err != nil {
-		return nil, err
-	}
 	var f fileFormat
-	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parse playlists: %w", err)
+	if err := atomicfile.ReadJSON(s.path, &f); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return s, nil
+		}
+		// Keep the damaged file for inspection instead of overwriting it on
+		// the next save. The player can start with an empty playlist list.
+		backup := s.path + ".corrupt-" + time.Now().Format("20060102-150405")
+		if renameErr := os.Rename(s.path, backup); renameErr == nil {
+			_ = os.Rename(s.path+".bak", backup+".bak")
+			return s, fmt.Errorf("%w (damaged file moved to %s)", err, backup)
+		}
+		return s, err
 	}
 	seen := make(map[string]bool)
 	for _, p := range f.Playlists {
 		p.Name = strings.TrimSpace(p.Name)
-		if p.Name == "" || utf8.RuneCountInString(p.Name) > 48 {
+		if p.Name == "" || utf8.RuneCountInString(p.Name) > 48 || strings.HasPrefix(p.Name, "@") {
 			continue
 		}
 		key := strings.ToLower(p.Name)
@@ -126,6 +130,9 @@ func (s *Store) Create(name string) (Playlist, error) {
 	}
 	if strings.ContainsAny(name, "\r\n\t") {
 		return Playlist{}, errors.New("playlist name contains invalid characters")
+	}
+	if strings.HasPrefix(name, "@") {
+		return Playlist{}, errors.New("playlist names starting with @ are reserved")
 	}
 
 	s.mu.Lock()
@@ -425,25 +432,10 @@ func (s *Store) Save() error {
 
 func (s *Store) saveLocked() error {
 	f := fileFormat{Version: 1, Playlists: s.items}
-	data, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(s.path)
-		if err2 := os.Rename(tmp, s.path); err2 != nil {
-			_ = os.Remove(tmp)
-			return errors.Join(err, err2)
-		}
-	}
-	return nil
+	return atomicfile.WriteJSON(s.path, f)
 }
 
 func dedupePaths(paths []string) []string {

@@ -34,6 +34,8 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderHelpModal(w, contentH)
 	case modalDownloads:
 		return m.renderDownloadsModal(w, contentH)
+	case modalImportM3U, modalExportM3U:
+		return m.renderM3UModal(w, contentH)
 	}
 	return ""
 }
@@ -69,6 +71,33 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 	}
 	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported — use single tracks."))
 	return renderBox("Add music", lines, width, height, colAccent, colAccent)
+}
+
+func (m *Model) renderM3UModal(w, contentH int) string {
+	width := modalWidth(w)
+	innerW := width - 4
+	height := modalHeight(contentH, 11)
+	importing := m.modal == modalImportM3U
+
+	title := "Export M3U"
+	description := fmt.Sprintf("Write the current list (%d tracks) to an M3U8 file.", len(m.visible))
+	if importing {
+		title = "Import M3U"
+		description = "Read an M3U/M3U8 playlist and create a playlist from it."
+	}
+
+	lines := []string{
+		textStyle.Render(truncateText(description, innerW)),
+		"",
+		fitLine(m.m3uInput.View(), innerW),
+		"",
+	}
+	if m.modalErr != "" {
+		lines = append(lines, errorStyle.Render(truncateText(m.modalErr, innerW)))
+	} else {
+		lines = append(lines, dimStyle.Render("Relative paths are resolved against the music folder."))
+	}
+	return renderBox(title, lines, width, height, colAccent, colAccent)
 }
 
 func (m *Model) renderNewPlaylistModal(w, contentH int) string {
@@ -289,6 +318,8 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"H / L", "seek 30 seconds"},
 		{"- / =", "volume down / up"},
 		{"s / r", "shuffle / repeat (" + iconShuffle + " / " + iconRepeat + ")"},
+		{"z", "sleep timer"},
+		{"o", "sort library"},
 		{"ctrl+click", "multi-select"},
 		{"ctrl+a", "select all"},
 		{"drag", "tracks to playlist"},
@@ -297,6 +328,9 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 	library := []keyBinding{
 		{"a", "add music link"},
 		{"P", "new playlist"},
+		{"I", "import M3U"},
+		{"E", "export M3U"},
+		{"f", "favorite"},
 		{"x", "add selection"},
 		{"X", "quick remove from playlist"},
 		{"D / delete", "remove or delete (asks first)"},

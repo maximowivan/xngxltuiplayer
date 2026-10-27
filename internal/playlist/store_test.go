@@ -172,3 +172,35 @@ func TestCleanMissing(t *testing.T) {
 		t.Fatalf("unexpected tracks: %+v", pl.Tracks)
 	}
 }
+
+func TestReservedPlaylistNames(t *testing.T) {
+	store, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("@favorites"); err == nil {
+		t.Fatal("names starting with @ should be reserved")
+	}
+}
+
+func TestCorruptFileIsKept(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "playlists.json")
+	if err := os.WriteFile(path, []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected a parse error")
+	}
+	if store == nil {
+		t.Fatal("store should still be usable")
+	}
+	if _, err := store.Create("Fresh"); err != nil {
+		t.Fatalf("store is not usable after recovery: %v", err)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "playlists.json.corrupt-*"))
+	if len(matches) != 1 {
+		t.Fatalf("corrupt file was not preserved: %v", matches)
+	}
+}

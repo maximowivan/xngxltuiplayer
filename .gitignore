@@ -15,6 +15,8 @@
 *.out
 coverage.txt
 preview.txt
+*.old
+dist/
 
 # Windows shortcuts
 *.lnk

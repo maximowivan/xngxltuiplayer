@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -103,9 +104,16 @@ func (m *Model) renderSidebar(width, height int) string {
 	lines := make([]string, 0, innerH)
 
 	names := m.playlists.Names()
-	allActive := m.view == "all"
+	allActive := m.view == viewAll
 	allSelected := m.focus == focusSidebar && m.sidebarCursor == 0
 	lines = append(lines, sidebarRow("All tracks", fmt.Sprintf("%d", len(m.tracks)), allActive, allSelected, false, innerW))
+
+	favCount := len(m.favoriteTracks())
+	recentCount := len(m.recentTracks(50))
+	lines = append(lines, sidebarRow(iconFavorite+" Favorites", fmt.Sprintf("%d", favCount),
+		m.view == viewFavorites, m.focus == focusSidebar && m.sidebarCursor == 1, false, innerW))
+	lines = append(lines, sidebarRow("Recent", fmt.Sprintf("%d", recentCount),
+		m.view == viewRecent, m.focus == focusSidebar && m.sidebarCursor == 2, false, innerW))
 	lines = append(lines, "")
 	lines = append(lines, sectionStyle.Render(truncateText(fmt.Sprintf("PLAYLISTS  %d", len(names)), innerW)))
 
@@ -126,7 +134,7 @@ func (m *Model) renderSidebar(width, height int) string {
 				count = len(pl.Tracks)
 			}
 			active := strings.EqualFold(m.view, name)
-			selected := m.focus == focusSidebar && m.sidebarCursor == i+1
+			selected := m.focus == focusSidebar && m.sidebarCursor == i+3
 			drop := m.dragActive && strings.EqualFold(m.dragTarget, name)
 			lines = append(lines, sidebarRow("≡ "+name, fmt.Sprintf("%d", count), active, selected, drop, innerW))
 		}
@@ -216,7 +224,17 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 				"No tracks match " + truncateText("\""+m.search+"\"", maxInt(10, width-16)),
 				"Press esc to clear the search.",
 			}
-		case m.view != "all":
+		case m.view == viewFavorites:
+			message = []string{
+				"No favorites yet.",
+				"Select a track and press f to add it here.",
+			}
+		case m.view == viewRecent:
+			message = []string{
+				"Nothing played yet.",
+				"Start a track and it will appear here.",
+			}
+		case m.view != viewAll:
 			message = []string{
 				"This playlist is empty.",
 				"Open All tracks, select a track and press x.",
@@ -1015,6 +1033,9 @@ func (m *Model) renderHints() string {
 
 func (m *Model) renderToastLine(w int) string {
 	if m.toast == "" {
+		if m.startupNote != "" && time.Now().Before(m.startupUntil) {
+			return renderToast(m.startupNote, toastInfo, w)
+		}
 		return strings.Repeat(" ", w)
 	}
 	return renderToast(m.toast, m.toastKind, w)
@@ -1034,6 +1055,12 @@ func (m *Model) viewWithModal(w, h int) string {
 func (m *Model) renderModalHints(w int) string {
 	switch m.modal {
 	case modalAddLink, modalNewPlaylist:
+		return hintLine(
+			keyHint("enter", "confirm"),
+			keyHint("esc", "cancel"),
+			keyHint("ctrl+v", "paste"),
+		)
+	case modalImportM3U, modalExportM3U:
 		return hintLine(
 			keyHint("enter", "confirm"),
 			keyHint("esc", "cancel"),

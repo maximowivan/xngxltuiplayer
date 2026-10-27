@@ -154,14 +154,24 @@ func (m *Model) clickSidebar(innerLine int) {
 	switch {
 	case innerLine == 0:
 		m.sidebarCursor = 0
-		m.view = "all"
+		m.view = viewAll
 		m.rebuildVisible("")
 		m.markDirty()
-	case innerLine >= 3:
-		idx := m.sidebarOffset + innerLine - 3
+	case innerLine == 1:
+		m.sidebarCursor = 1
+		m.view = viewFavorites
+		m.rebuildVisible("")
+		m.markDirty()
+	case innerLine == 2:
+		m.sidebarCursor = 2
+		m.view = viewRecent
+		m.rebuildVisible("")
+		m.markDirty()
+	case innerLine >= 5:
+		idx := m.sidebarOffset + innerLine - 5
 		names := m.playlists.Names()
 		if idx >= 0 && idx < len(names) {
-			m.sidebarCursor = idx + 1
+			m.sidebarCursor = idx + 3
 			m.view = names[idx]
 			m.rebuildVisible("")
 			m.markDirty()

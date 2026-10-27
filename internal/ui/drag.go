@@ -45,10 +45,10 @@ func (m *Model) playlistAt(x, y int) string {
 		return ""
 	}
 	innerLine := y - 2
-	if innerLine < 3 || innerLine >= contentH-2 {
+	if innerLine < 5 || innerLine >= contentH-2 {
 		return ""
 	}
-	idx := m.sidebarOffset + innerLine - 3
+	idx := m.sidebarOffset + innerLine - 5
 	names := m.playlists.Names()
 	if idx < 0 || idx >= len(names) {
 		return ""
@@ -72,7 +72,7 @@ func (m *Model) finishTrackDrag() tea.Cmd {
 		return nil
 	}
 
-	if source == "all" {
+	if source == viewAll || isSpecialView(source) {
 		added, skipped, err := m.playlists.AddMany(target, paths)
 		if err != nil {
 			m.setToast("Could not update playlist: "+err.Error(), toastError, 4*time.Second)

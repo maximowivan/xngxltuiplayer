@@ -9,6 +9,7 @@
 #>
 param(
     [string]$Output = "xngxltuiplayer.exe",
+    [string]$Version = "",
     [switch]$NoCheck
 )
 
@@ -21,7 +22,11 @@ if (-not $go) {
 }
 
 Write-Host "Building $Output ..."
-& go build -trimpath -ldflags "-s -w" -o $Output .
+$ldflags = "-s -w"
+if ($Version) {
+    $ldflags += " -X main.version=$Version"
+}
+& go build -trimpath -ldflags $ldflags -o $Output .
 if ($LASTEXITCODE -ne 0) {
     throw "go build failed with exit code $LASTEXITCODE"
 }

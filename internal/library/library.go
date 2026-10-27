@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -29,6 +28,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"tuiplay/internal/atomicfile"
 	"tuiplay/internal/model"
 )
 
@@ -160,11 +160,9 @@ func (l *Library) Scan() ([]model.Track, error) {
 
 func (l *Library) loadCache() cacheFile {
 	var cache cacheFile
-	data, err := os.ReadFile(filepath.Join(l.DataDir, "library.json"))
-	if err != nil {
-		return cache
+	if err := atomicfile.ReadJSON(filepath.Join(l.DataDir, "library.json"), &cache); err != nil {
+		return cacheFile{}
 	}
-	_ = json.Unmarshal(data, &cache)
 	if cache.Version != 2 {
 		return cacheFile{}
 	}
@@ -172,26 +170,10 @@ func (l *Library) loadCache() cacheFile {
 }
 
 func (l *Library) saveCache(tracks []model.Track) error {
-	data, err := json.MarshalIndent(cacheFile{Version: 2, Tracks: tracks}, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(l.DataDir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(l.DataDir, "library.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(path)
-		if err2 := os.Rename(tmp, path); err2 != nil {
-			_ = os.Remove(tmp)
-			return err2
-		}
-	}
-	return nil
+	return atomicfile.WriteJSON(filepath.Join(l.DataDir, "library.json"), cacheFile{Version: 2, Tracks: tracks})
 }
 
 func readTrackMetadata(path string, info os.FileInfo) model.Track {

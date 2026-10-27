@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,11 +19,21 @@ import (
 	"tuiplay/internal/config"
 	"tuiplay/internal/download"
 	"tuiplay/internal/library"
+	"tuiplay/internal/m3u"
 	"tuiplay/internal/model"
 	"tuiplay/internal/playlist"
 	"tuiplay/internal/presence"
 	"tuiplay/internal/session"
+	"tuiplay/internal/stats"
 )
+
+var startupHint string
+
+// SetStartupNote shows a short hint in the toast line for the first seconds
+// after launch. An empty string disables it.
+func SetStartupNote(note string) {
+	startupHint = strings.TrimSpace(note)
+}
 
 type focusArea int
 
@@ -32,6 +43,12 @@ const (
 )
 
 const crossfadeDuration = 5 * time.Second
+
+const (
+	viewAll       = "all"
+	viewFavorites = "@favorites"
+	viewRecent    = "@recent"
+)
 
 type modalKind int
 
@@ -45,6 +62,8 @@ const (
 	modalConfirmDeletePlaylist
 	modalHelp
 	modalDownloads
+	modalImportM3U
+	modalExportM3U
 )
 
 type toastKind int
@@ -75,6 +94,7 @@ type Model struct {
 	cfg            config.Config
 	lib            *library.Library
 	playlists      *playlist.Store
+	stats          *stats.Store
 	engine         *audio.Engine
 	mgr            *download.Manager
 	initial        session.State
@@ -117,6 +137,7 @@ type Model struct {
 	modal          modalKind
 	linkInput      textinput.Model
 	nameInput      textinput.Model
+	m3uInput       textinput.Model
 	modalCursor    int
 	modalErr       string
 	pendingTrack   model.Track
@@ -146,7 +167,11 @@ type Model struct {
 	volume   int
 	repeat   string
 	shuffle  bool
+	sortMode string
 	spectrum []float64
+
+	sleepPreset int
+	sleepAt     time.Time
 
 	artImage   image.Image
 	artFor     string
@@ -167,6 +192,9 @@ type Model struct {
 	toastKind  toastKind
 	toastUntil time.Time
 
+	startupNote  string
+	startupUntil time.Time
+
 	lastSave  time.Time
 	saveDirty bool
 	spinner   int
@@ -174,7 +202,8 @@ type Model struct {
 
 // New constructs the UI model.
 func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
-	engine *audio.Engine, mgr *download.Manager, initial session.State) *Model {
+	statsStore *stats.Store, engine *audio.Engine, mgr *download.Manager,
+	initial session.State) *Model {
 
 	volume := initial.Volume
 	if volume < 0 {
@@ -189,13 +218,18 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 	}
 	view := initial.View
 	if view == "" {
-		view = "all"
+		view = viewAll
+	}
+	sortMode := initial.Sort
+	if !validSortMode(sortMode) {
+		sortMode = "artist"
 	}
 
 	m := &Model{
 		cfg:       cfg,
 		lib:       lib,
 		playlists: playlists,
+		stats:     statsStore,
 		engine:    engine,
 		mgr:       mgr,
 		initial:   initial,
@@ -207,13 +241,19 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 		volume:    volume,
 		repeat:    repeat,
 		shuffle:   initial.Shuffle,
+		sortMode:  sortMode,
 		theme:     applyTheme(initial.Theme),
 		jobSeen:   make(map[int]download.Status),
 		lastSave:  time.Now(),
 	}
+	m.startupNote = startupHint
+	if m.startupNote != "" {
+		m.startupUntil = time.Now().Add(15 * time.Second)
+	}
 
 	m.linkInput = newInput("› ", "https://open.spotify.com/track/…", 4096)
 	m.nameInput = newInput("› ", "Playlist name", 48)
+	m.m3uInput = newInput("› ", "playlist.m3u8 (relative to the music folder)", 4096)
 	m.searchInput = newInput("/ ", "search title, artist, album…", 120)
 
 	engine.SetVolume(float64(volume) / 100)
@@ -380,7 +420,8 @@ func (m *Model) listRows() int {
 
 func (m *Model) sidebarRows() int {
 	_, _, contentH, _, _, _ := m.layout()
-	rows := contentH - 2 - 3
+	// All tracks, Favorites, Recent, spacer and the PLAYLISTS heading.
+	rows := contentH - 2 - 5
 	if rows < 1 {
 		rows = 1
 	}
@@ -435,8 +476,13 @@ func (m *Model) selectedTrack() (model.Track, bool) {
 }
 
 func (m *Model) baseTracks() []model.Track {
-	if m.view == "all" {
+	switch m.view {
+	case viewAll:
 		return m.tracks
+	case viewFavorites:
+		return m.favoriteTracks()
+	case viewRecent:
+		return m.recentTracks(50)
 	}
 	pl, ok := m.playlists.Get(m.view)
 	if !ok {
@@ -455,9 +501,40 @@ func (m *Model) baseTracks() []model.Track {
 	return out
 }
 
+func (m *Model) favoriteTracks() []model.Track {
+	if m.stats == nil {
+		return nil
+	}
+	out := make([]model.Track, 0)
+	for _, t := range m.tracks {
+		if m.stats.IsFavorite(t.Path) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (m *Model) recentTracks(limit int) []model.Track {
+	if m.stats == nil {
+		return nil
+	}
+	byPath := make(map[string]model.Track, len(m.tracks))
+	for _, t := range m.tracks {
+		byPath[trackKey(t.Path)] = t
+	}
+	paths := m.stats.Recent(limit)
+	out := make([]model.Track, 0, len(paths))
+	for _, p := range paths {
+		if t, ok := byPath[trackKey(p)]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (m *Model) rebuildVisible(preservePath string) {
-	if m.view != "all" && !m.playlists.Has(m.view) {
-		m.view = "all"
+	if !isSpecialView(m.view) && m.view != viewAll && !m.playlists.Has(m.view) {
+		m.view = viewAll
 	}
 	if preservePath == "" {
 		if t, ok := m.selectedTrack(); ok {
@@ -478,6 +555,10 @@ func (m *Model) rebuildVisible(preservePath string) {
 			}
 		}
 		m.visible = filtered
+	}
+
+	if m.view == viewAll || m.view == viewFavorites {
+		m.applySort()
 	}
 
 	m.cursor = 0
@@ -522,10 +603,8 @@ func (m *Model) clampListOffset() {
 func (m *Model) clampSidebarOffset() {
 	rows := m.sidebarRows()
 	count := len(m.playlists.Names())
-	idx := m.sidebarCursor
-	if idx > 0 {
-		idx--
-	} else {
+	idx := m.sidebarCursor - 3
+	if idx < 0 {
 		idx = 0
 	}
 	if idx < m.sidebarOffset {
@@ -544,15 +623,24 @@ func (m *Model) clampSidebarOffset() {
 }
 
 func (m *Model) syncSidebarCursor() {
-	if m.view == "all" {
+	switch m.view {
+	case viewAll:
 		m.sidebarCursor = 0
+		m.clampSidebarOffset()
+		return
+	case viewFavorites:
+		m.sidebarCursor = 1
+		m.clampSidebarOffset()
+		return
+	case viewRecent:
+		m.sidebarCursor = 2
 		m.clampSidebarOffset()
 		return
 	}
 	names := m.playlists.Names()
 	for i, name := range names {
 		if strings.EqualFold(name, m.view) {
-			m.sidebarCursor = i + 1
+			m.sidebarCursor = i + 3
 			m.clampSidebarOffset()
 			return
 		}
@@ -563,23 +651,41 @@ func (m *Model) syncSidebarCursor() {
 
 func (m *Model) openViewAtCursor() {
 	names := m.playlists.Names()
-	if m.sidebarCursor <= 0 {
-		m.view = "all"
-	} else if m.sidebarCursor-1 < len(names) {
-		m.view = names[m.sidebarCursor-1]
-	} else {
-		m.sidebarCursor = 0
-		m.view = "all"
+	switch m.sidebarCursor {
+	case 0:
+		m.view = viewAll
+	case 1:
+		m.view = viewFavorites
+	case 2:
+		m.view = viewRecent
+	default:
+		idx := m.sidebarCursor - 3
+		if idx >= 0 && idx < len(names) {
+			m.view = names[idx]
+		} else {
+			m.sidebarCursor = 0
+			m.view = viewAll
+		}
 	}
 	m.rebuildVisible("")
 	m.markDirty()
 }
 
 func (m *Model) viewLabel() string {
-	if m.view == "all" {
+	switch m.view {
+	case viewAll:
 		return "All tracks"
+	case viewFavorites:
+		return "Favorites"
+	case viewRecent:
+		return "Recently played"
+	default:
+		return m.view
 	}
-	return m.view
+}
+
+func isSpecialView(view string) bool {
+	return view == viewFavorites || view == viewRecent
 }
 
 func (m *Model) markDirty() {
@@ -610,6 +716,7 @@ func (m *Model) saveSession() {
 		Shuffle: m.shuffle,
 		View:    m.view,
 		Theme:   m.theme,
+		Sort:    m.sortMode,
 	}
 	if m.current != nil {
 		st.Track = m.current.Path
@@ -627,10 +734,13 @@ func (m *Model) SaveSession() {
 
 func (m *Model) restoreSession() {
 	m.restored = true
-	if m.initial.View != "" && m.initial.View != "all" && m.playlists.Has(m.initial.View) {
+	switch {
+	case m.initial.View == viewAll || isSpecialView(m.initial.View):
 		m.view = m.initial.View
-	} else {
-		m.view = "all"
+	case m.initial.View != "" && m.playlists.Has(m.initial.View):
+		m.view = m.initial.View
+	default:
+		m.view = viewAll
 	}
 	m.syncSidebarCursor()
 
@@ -708,6 +818,9 @@ func (m *Model) playTrack(t model.Track, start time.Duration, rebuildQueue bool)
 	m.duration = t.Duration
 	m.engineGen = m.engine.Gen()
 	m.crossfadeTried = false
+	if m.stats != nil {
+		_ = m.stats.MarkPlayed(t.Path)
+	}
 	if rebuildQueue {
 		m.buildQueueFor(t.Path)
 	} else if len(m.queue) == 0 {
@@ -975,6 +1088,9 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 	m.duration = next.Duration
 	m.engineGen = m.engine.Gen()
 	m.crossfadeTried = false
+	if m.stats != nil {
+		_ = m.stats.MarkPlayed(next.Path)
+	}
 	m.markDirty()
 	m.syncPresence()
 	if m.artFor == next.Path && m.artImage != nil {
@@ -1074,6 +1190,155 @@ func (m *Model) cycleRepeat() {
 	m.setToast("Repeat: "+m.repeat, toastInfo, 1200*time.Millisecond)
 }
 
+var sleepPresets = []time.Duration{
+	15 * time.Minute,
+	30 * time.Minute,
+	45 * time.Minute,
+	60 * time.Minute,
+}
+
+func (m *Model) cycleSleepTimer() {
+	m.sleepPreset = (m.sleepPreset + 1) % (len(sleepPresets) + 1)
+	if m.sleepPreset == 0 {
+		m.sleepAt = time.Time{}
+		m.setToast("Sleep timer: off", toastInfo, 2*time.Second)
+		return
+	}
+	d := sleepPresets[m.sleepPreset-1]
+	m.sleepAt = time.Now().Add(d)
+	m.setToast("Sleep timer: "+formatSleepDuration(d), toastInfo, 2*time.Second)
+}
+
+func (m *Model) checkSleepTimer() {
+	if m.sleepAt.IsZero() || time.Now().Before(m.sleepAt) {
+		return
+	}
+	m.sleepAt = time.Time{}
+	m.sleepPreset = 0
+	if m.loaded && m.engine.Active() && !m.paused {
+		m.paused = m.engine.TogglePause()
+	} else {
+		m.paused = true
+	}
+	m.setToast("Sleep timer: playback paused", toastInfo, 5*time.Second)
+}
+
+func formatSleepDuration(d time.Duration) string {
+	if d >= time.Hour {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dm", int(d/time.Minute))
+}
+
+func validSortMode(mode string) bool {
+	switch mode {
+	case "artist", "title", "album", "year", "recent":
+		return true
+	default:
+		return false
+	}
+}
+
+func nextSortMode(mode string) string {
+	switch mode {
+	case "artist":
+		return "title"
+	case "title":
+		return "album"
+	case "album":
+		return "year"
+	case "year":
+		return "recent"
+	default:
+		return "artist"
+	}
+}
+
+func sortModeLabel(mode string) string {
+	switch mode {
+	case "artist":
+		return "Artist"
+	case "title":
+		return "Title"
+	case "album":
+		return "Album"
+	case "year":
+		return "Year"
+	case "recent":
+		return "Recently added"
+	default:
+		return "Artist"
+	}
+}
+
+func (m *Model) cycleSort() {
+	if m.view != viewAll && m.view != viewFavorites {
+		m.setToast("Sort applies to All tracks and Favorites", toastInfo, 2*time.Second)
+		return
+	}
+	selected, hadSelection := m.selectedTrack()
+	m.sortMode = nextSortMode(m.sortMode)
+	m.applySort()
+	// Keep the selected track under the cursor after the order changes.
+	if hadSelection {
+		for i := range m.visible {
+			if trackKey(m.visible[i].Path) == trackKey(selected.Path) {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	m.clampListOffset()
+	m.markDirty()
+	m.setToast("Sort: "+sortModeLabel(m.sortMode), toastInfo, 1500*time.Millisecond)
+}
+
+func (m *Model) applySort() {
+	switch m.sortMode {
+	case "title":
+		sort.SliceStable(m.visible, func(i, j int) bool {
+			a, b := strings.ToLower(m.visible[i].DisplayTitle()), strings.ToLower(m.visible[j].DisplayTitle())
+			if a != b {
+				return a < b
+			}
+			return m.visible[i].SortKey() < m.visible[j].SortKey()
+		})
+	case "album":
+		sort.SliceStable(m.visible, func(i, j int) bool {
+			a, b := strings.ToLower(m.visible[i].DisplayAlbum()), strings.ToLower(m.visible[j].DisplayAlbum())
+			if a != b {
+				return a < b
+			}
+			return m.visible[i].SortKey() < m.visible[j].SortKey()
+		})
+	case "year":
+		sort.SliceStable(m.visible, func(i, j int) bool {
+			a, b := m.visible[i].Year, m.visible[j].Year
+			if a == "" || b == "" {
+				if a == b {
+					return m.visible[i].SortKey() < m.visible[j].SortKey()
+				}
+				return b == ""
+			}
+			if a != b {
+				return a > b
+			}
+			return m.visible[i].SortKey() < m.visible[j].SortKey()
+		})
+	case "recent":
+		sort.SliceStable(m.visible, func(i, j int) bool {
+			if !m.visible[i].Added.Equal(m.visible[j].Added) {
+				return m.visible[i].Added.After(m.visible[j].Added)
+			}
+			return m.visible[i].SortKey() < m.visible[j].SortKey()
+		})
+	default:
+		sort.SliceStable(m.visible, func(i, j int) bool {
+			return m.visible[i].SortKey() < m.visible[j].SortKey()
+		})
+	}
+}
+
 func (m *Model) toggleShuffle() {
 	m.shuffle = !m.shuffle
 	m.shuffleHistory = nil
@@ -1103,8 +1368,45 @@ func (m *Model) moveCursor(delta int) {
 	m.clampListOffset()
 }
 
+func (m *Model) toggleFavorite() {
+	if m.stats == nil {
+		m.setToast("Statistics are unavailable", toastWarning, 2*time.Second)
+		return
+	}
+	tracks := m.selectionTracks()
+	if len(tracks) == 0 {
+		if t, ok := m.selectedTrack(); ok {
+			tracks = []model.Track{t}
+		}
+	}
+	if len(tracks) == 0 {
+		m.setToast("Select a track first", toastInfo, 2*time.Second)
+		return
+	}
+
+	allFavorites := true
+	for _, t := range tracks {
+		if !m.stats.IsFavorite(t.Path) {
+			allFavorites = false
+			break
+		}
+	}
+	for _, t := range tracks {
+		_ = m.stats.SetFavorite(t.Path, !allFavorites)
+	}
+	if m.view == viewFavorites {
+		m.rebuildVisible("")
+	}
+	if allFavorites {
+		m.setToast("Removed from favorites", toastSuccess, 2*time.Second)
+	} else {
+		m.setToast("Added to favorites", toastSuccess, 2*time.Second)
+	}
+	m.markDirty()
+}
+
 func (m *Model) removeFromPlaylist() {
-	if m.view == "all" {
+	if m.view == viewAll || isSpecialView(m.view) {
 		m.setToast("Open a playlist to remove tracks from it", toastInfo, 2*time.Second)
 		return
 	}
@@ -1137,7 +1439,7 @@ func (m *Model) removeFromPlaylist() {
 // playlist. The audio files stay on disk; the confirmation also offers a disk
 // delete for users who really want to remove the files.
 func (m *Model) openRemoveFromPlaylist() {
-	if m.view == "all" {
+	if m.view == viewAll || isSpecialView(m.view) {
 		m.openDeleteTrack()
 		return
 	}
@@ -1157,7 +1459,7 @@ func (m *Model) openRemoveFromPlaylist() {
 
 func (m *Model) removePlaylistTracksNow() tea.Cmd {
 	tracks := append([]model.Track(nil), m.deleteTracks...)
-	if len(tracks) == 0 || m.view == "all" {
+	if len(tracks) == 0 || m.view == viewAll || isSpecialView(m.view) {
 		m.closeModal()
 		return nil
 	}
@@ -1223,6 +1525,9 @@ func (m *Model) deleteTrackNow() tea.Cmd {
 		deleted++
 		if _, err := m.playlists.RemovePathEverywhere(t.Path); err != nil {
 			playlistErr = true
+		}
+		if m.stats != nil {
+			_ = m.stats.Remove(t.Path)
 		}
 	}
 
@@ -1346,6 +1651,7 @@ func (m *Model) resizeInputs() {
 	modalW := modalWidth(m.width)
 	m.linkInput.Width = maxInt(20, modalW-8)
 	m.nameInput.Width = maxInt(20, modalW-8)
+	m.m3uInput.Width = maxInt(20, modalW-8)
 	m.searchInput.Width = maxInt(16, centerW-16)
 }
 
@@ -1363,6 +1669,88 @@ func (m *Model) openNewPlaylist() tea.Cmd {
 	m.nameInput.SetValue("")
 	m.resizeInputs()
 	return m.nameInput.Focus()
+}
+
+func (m *Model) openImportM3U() tea.Cmd {
+	m.modal = modalImportM3U
+	m.modalErr = ""
+	m.m3uInput.SetValue("")
+	m.resizeInputs()
+	return m.m3uInput.Focus()
+}
+
+func (m *Model) openExportM3U() tea.Cmd {
+	name := m.view
+	switch name {
+	case viewAll:
+		name = "library"
+	case viewFavorites:
+		name = "favorites"
+	case viewRecent:
+		name = "recent"
+	}
+	name = sanitizeM3UName(name)
+	if !strings.HasSuffix(strings.ToLower(name), ".m3u") && !strings.HasSuffix(strings.ToLower(name), ".m3u8") {
+		name += ".m3u8"
+	}
+	m.modal = modalExportM3U
+	m.modalErr = ""
+	m.m3uInput.SetValue(name)
+	m.resizeInputs()
+	return m.m3uInput.Focus()
+}
+
+func (m *Model) resolveM3UPath(value string) string {
+	value = strings.TrimSpace(strings.Trim(value, `"`))
+	value = os.ExpandEnv(value)
+	if value == "" {
+		return ""
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(m.cfg.MusicDir, value)
+	}
+	return filepath.Clean(value)
+}
+
+func sanitizeM3UName(name string) string {
+	name = strings.TrimSpace(name)
+	replacer := strings.NewReplacer(
+		"\\", "-", "/", "-", ":", "-", "*", "-", "?", "-",
+		`"`, "-", "<", "-", ">", "-", "|", "-",
+	)
+	name = replacer.Replace(name)
+	name = strings.Trim(name, " .-")
+	if name == "" {
+		return "playlist"
+	}
+	return name
+}
+
+func uniquePlaylistName(base string, exists func(string) bool) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "Imported"
+	}
+	base = truncateRunes(base, 48)
+	if !exists(base) {
+		return base
+	}
+	for i := 2; ; i++ {
+		suffix := fmt.Sprintf(" (%d)", i)
+		prefix := truncateRunes(base, maxInt(1, 48-len([]rune(suffix))))
+		candidate := prefix + suffix
+		if !exists(candidate) {
+			return candidate
+		}
+	}
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit])
 }
 
 func (m *Model) openAddToPlaylist() tea.Cmd {
@@ -1410,18 +1798,17 @@ func (m *Model) openDeleteTrack() {
 }
 
 func (m *Model) openDeletePlaylist() {
-	if m.sidebarCursor <= 0 {
+	if m.sidebarCursor <= 2 {
 		m.setToast("Select a playlist first", toastInfo, 2*time.Second)
 		return
 	}
 	names := m.playlists.Names()
-	if m.sidebarCursor-1 >= len(names) {
+	if m.sidebarCursor-3 >= len(names) {
 		return
 	}
-	m.deletePlaylist = names[m.sidebarCursor-1]
+	m.deletePlaylist = names[m.sidebarCursor-3]
 	m.modal = modalConfirmDeletePlaylist
 }
-
 func (m *Model) openDownloads() {
 	m.modal = modalDownloads
 	m.refreshJobs()
@@ -1442,6 +1829,8 @@ func (m *Model) closeModal() {
 		m.linkInput.Blur()
 	case modalNewPlaylist:
 		m.nameInput.Blur()
+	case modalImportM3U, modalExportM3U:
+		m.m3uInput.Blur()
 	}
 	m.modal = modalNone
 	m.modalErr = ""
@@ -1485,6 +1874,93 @@ func (m *Model) submitPlaylistName() tea.Cmd {
 	m.closeModal()
 	m.setToast("Playlist \""+name+"\" created", toastSuccess, 3*time.Second)
 	m.markDirty()
+	return nil
+}
+
+func (m *Model) submitImportM3U() tea.Cmd {
+	raw := strings.TrimSpace(m.m3uInput.Value())
+	if raw == "" {
+		m.modalErr = "Enter a path to an .m3u or .m3u8 file."
+		return nil
+	}
+	path := m.resolveM3UPath(raw)
+	entries, err := m3u.ParseFile(path)
+	if err != nil {
+		m.modalErr = "Import failed: " + err.Error()
+		return nil
+	}
+
+	name := uniquePlaylistName(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), m.playlists.Has)
+	if _, err := m.playlists.Create(name); err != nil {
+		m.modalErr = err.Error()
+		return nil
+	}
+
+	paths := make([]string, 0, len(entries))
+	needRefresh := false
+	missing := 0
+	for _, e := range entries {
+		if t, ok := m.findTrack(e.Path); ok {
+			paths = append(paths, t.Path)
+			continue
+		}
+		if info, err := os.Stat(e.Path); err == nil && !info.IsDir() && library.IsSupported(e.Path) {
+			paths = append(paths, e.Path)
+			needRefresh = true
+			continue
+		}
+		missing++
+	}
+	if len(paths) == 0 {
+		_, _ = m.playlists.Delete(name)
+		m.modalErr = fmt.Sprintf("No playable tracks found: %d entries, %d missing.", len(entries), missing)
+		return nil
+	}
+
+	added, skipped, err := m.playlists.AddMany(name, paths)
+	if err != nil {
+		_, _ = m.playlists.Delete(name)
+		m.modalErr = err.Error()
+		return nil
+	}
+	m.m3uInput.Blur()
+	m.closeModal()
+	m.view = name
+	m.rebuildVisible("")
+	m.markDirty()
+	msg := fmt.Sprintf("Imported %d tracks into %s", added, name)
+	if skipped > 0 {
+		msg += fmt.Sprintf(" (%d duplicates skipped)", skipped)
+	}
+	m.setToast(msg, toastSuccess, 4*time.Second)
+	if needRefresh {
+		return m.startRefresh()
+	}
+	return nil
+}
+
+func (m *Model) submitExportM3U() tea.Cmd {
+	raw := strings.TrimSpace(m.m3uInput.Value())
+	if raw == "" {
+		m.modalErr = "Enter an output path."
+		return nil
+	}
+	if len(m.visible) == 0 {
+		m.modalErr = "There are no tracks to export."
+		return nil
+	}
+	path := m.resolveM3UPath(raw)
+	if filepath.Ext(path) == "" {
+		path += ".m3u8"
+	}
+	tracks := append([]model.Track(nil), m.visible...)
+	if err := m3u.WriteFile(path, tracks); err != nil {
+		m.modalErr = "Export failed: " + err.Error()
+		return nil
+	}
+	m.m3uInput.Blur()
+	m.closeModal()
+	m.setToast(fmt.Sprintf("Exported %d tracks to %s", len(tracks), path), toastSuccess, 4*time.Second)
 	return nil
 }
 
@@ -1682,6 +2158,8 @@ func (m *Model) handleTick() tea.Cmd {
 	if m.toast != "" && time.Now().After(m.toastUntil) {
 		m.toast = ""
 	}
+
+	m.checkSleepTimer()
 
 	if m.loaded && m.current != nil {
 		if m.engine.Active() {

@@ -82,6 +82,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openAddLink()
 	case "P":
 		return m, m.openNewPlaylist()
+	case "I":
+		return m, m.openImportM3U()
+	case "E":
+		return m, m.openExportM3U()
 	case "/":
 		return m, m.startSearch()
 	case "tab":
@@ -166,6 +170,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.cycleRepeat()
 		return m, nil
+	case "z":
+		m.cycleSleepTimer()
+		return m, nil
+	case "o":
+		m.cycleSort()
+		return m, nil
 	case "t":
 		m.cycleTheme(1)
 		return m, nil
@@ -183,19 +193,22 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "X":
 		m.removeFromPlaylist()
 		return m, nil
+	case "f":
+		m.toggleFavorite()
+		return m, nil
 	case "D":
-		if m.focus == focusSidebar && m.sidebarCursor > 0 {
+		if m.focus == focusSidebar && m.sidebarCursor > 2 {
 			m.openDeletePlaylist()
-		} else if m.view != "all" {
+		} else if m.view != viewAll && !isSpecialView(m.view) {
 			m.openRemoveFromPlaylist()
 		} else {
 			m.openDeleteTrack()
 		}
 		return m, nil
 	case "delete":
-		if m.focus == focusSidebar && m.sidebarCursor > 0 {
+		if m.focus == focusSidebar && m.sidebarCursor > 2 {
 			m.openDeletePlaylist()
-		} else if m.view != "all" {
+		} else if m.view != viewAll && !isSpecialView(m.view) {
 			m.openRemoveFromPlaylist()
 		} else {
 			m.openDeleteTrack()
@@ -270,8 +283,8 @@ func (m *Model) moveSidebar(delta int) {
 	if m.sidebarCursor < 0 {
 		m.sidebarCursor = 0
 	}
-	if m.sidebarCursor > count {
-		m.sidebarCursor = count
+	if m.sidebarCursor > count+2 {
+		m.sidebarCursor = count + 2
 	}
 	m.clampSidebarOffset()
 }
@@ -323,6 +336,21 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.nameInput, cmd = m.nameInput.Update(msg)
 		}
+		return m, cmd
+
+	case modalImportM3U, modalExportM3U:
+		switch key {
+		case "esc":
+			m.closeModal()
+			return m, nil
+		case "enter":
+			if m.modal == modalImportM3U {
+				return m, m.submitImportM3U()
+			}
+			return m, m.submitExportM3U()
+		}
+		var cmd tea.Cmd
+		m.m3uInput, cmd = m.m3uInput.Update(msg)
 		return m, cmd
 
 	case modalAddToPlaylist:

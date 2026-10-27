@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"tuiplay/internal/playlist"
 	"tuiplay/internal/presence"
 	"tuiplay/internal/session"
+	"tuiplay/internal/stats"
 )
 
 func testModel(t *testing.T) (*Model, func()) {
@@ -46,7 +48,7 @@ func testModel(t *testing.T) (*Model, func()) {
 		DataDir:  cfg.DataDir,
 		TempDir:  cfg.TempDir,
 	})
-	m := New(cfg, lib, pl, eng, mgr, session.Default())
+	m := New(cfg, lib, pl, stats.Load(cfg.DataDir), eng, mgr, session.Default())
 	m.loading = false
 	m.restored = true
 	m.width, m.height = 110, 32
@@ -247,17 +249,17 @@ func TestSidebarNavigation(t *testing.T) {
 	}
 	m.focus = focusSidebar
 	m.sidebarCursor = 0
-	m.moveSidebar(1)
-	if m.sidebarCursor != 1 {
-		t.Fatalf("sidebar cursor = %d, want 1", m.sidebarCursor)
+	m.moveSidebar(3)
+	if m.sidebarCursor != 3 {
+		t.Fatalf("sidebar cursor = %d, want 3", m.sidebarCursor)
 	}
 	m.openViewAtCursor()
 	if m.view != "One" {
 		t.Fatalf("view = %q, want One", m.view)
 	}
 	m.moveSidebar(10)
-	if m.sidebarCursor != 2 {
-		t.Fatalf("sidebar cursor should clamp to 2, got %d", m.sidebarCursor)
+	if m.sidebarCursor != 4 {
+		t.Fatalf("sidebar cursor should clamp to 4, got %d", m.sidebarCursor)
 	}
 }
 
@@ -331,7 +333,7 @@ func TestMouseSelectsTrackAndOpensPlaylist(t *testing.T) {
 	}
 	m.view = "all"
 	m.sidebarCursor = 0
-	m.Update(tea.MouseMsg{X: 4, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m.Update(tea.MouseMsg{X: 4, Y: 7, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.view != "Mix" {
 		t.Fatalf("view = %q, want Mix after clicking the playlist", m.view)
 	}
@@ -641,11 +643,11 @@ func TestMouseDragMovesTracksBetweenPlaylists(t *testing.T) {
 	m.focus = focusTracks
 
 	m.Update(tea.MouseMsg{X: 40, Y: 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	m.Update(tea.MouseMsg{X: 5, Y: 6, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m.Update(tea.MouseMsg{X: 5, Y: 8, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
 	if !m.dragActive || m.dragTarget != "Target" {
 		t.Fatalf("drag active=%v target=%q", m.dragActive, m.dragTarget)
 	}
-	m.Update(tea.MouseMsg{X: 5, Y: 6, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+	m.Update(tea.MouseMsg{X: 5, Y: 8, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
 
 	source, _ := m.playlists.Get("Source")
 	target, _ := m.playlists.Get("Target")
@@ -892,7 +894,7 @@ func TestDeletePlaylistFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.view = "Trash"
-	m.sidebarCursor = 1
+	m.sidebarCursor = 3
 	m.openDeletePlaylist()
 	m.deletePlaylistNow()
 	if m.playlists.Has("Trash") {
@@ -900,6 +902,105 @@ func TestDeletePlaylistFlow(t *testing.T) {
 	}
 	if m.view != "all" {
 		t.Fatalf("view = %q, want all", m.view)
+	}
+}
+
+func TestFavoritesView(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	if err := m.stats.SetFavorite(m.tracks[0].Path, true); err != nil {
+		t.Fatal(err)
+	}
+	m.view = viewFavorites
+	m.rebuildVisible("")
+	if len(m.visible) != 1 || m.visible[0].Title != m.tracks[0].Title {
+		t.Fatalf("favorites = %+v", m.visible)
+	}
+
+	m.cursor = 0
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if len(m.visible) != 0 {
+		t.Fatalf("favorite was not removed: %+v", m.visible)
+	}
+	if m.stats.FavoriteCount() != 0 {
+		t.Fatalf("favorite count = %d, want 0", m.stats.FavoriteCount())
+	}
+}
+
+func TestSleepTimerPausesPlayback(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	if !m.sleepAt.IsZero() {
+		t.Fatal("timer should start disabled")
+	}
+	m.cycleSleepTimer()
+	if m.sleepAt.IsZero() {
+		t.Fatal("timer was not armed")
+	}
+	m.paused = false
+	m.sleepAt = time.Now().Add(-time.Second)
+	m.checkSleepTimer()
+	if !m.paused {
+		t.Fatal("sleep timer did not pause playback")
+	}
+	if !m.sleepAt.IsZero() {
+		t.Fatal("timer was not cleared after firing")
+	}
+}
+
+func TestSortByYear(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	m.sortMode = "year"
+	m.view = viewAll
+	m.rebuildVisible("")
+	if len(m.visible) != 3 {
+		t.Fatalf("visible = %d, want 3", len(m.visible))
+	}
+	want := []string{"Slow Motion", "Night Drive", "Paper Planes"}
+	for i, title := range want {
+		if m.visible[i].Title != title {
+			t.Fatalf("order[%d] = %q, want %q (all: %+v)", i, m.visible[i].Title, title, m.visible)
+		}
+	}
+}
+
+func TestM3UImportAndExport(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+
+	src := filepath.Join(m.cfg.MusicDir, "import.m3u8")
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for _, tr := range m.tracks[:2] {
+		fmt.Fprintf(&b, "#EXTINF:0,%s - %s\n%s\n", tr.DisplayArtist(), tr.DisplayTitle(), tr.Path)
+	}
+	if err := os.WriteFile(src, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.openImportM3U()
+	m.m3uInput.SetValue(src)
+	m.submitImportM3U()
+	if !m.playlists.Has("import") {
+		t.Fatal("import playlist was not created")
+	}
+	pl, _ := m.playlists.Get("import")
+	if len(pl.Tracks) != 2 {
+		t.Fatalf("imported tracks = %d, want 2", len(pl.Tracks))
+	}
+
+	dst := filepath.Join(m.cfg.MusicDir, "export.m3u8")
+	m.view = viewAll
+	m.rebuildVisible("")
+	m.openExportM3U()
+	m.m3uInput.SetValue(dst)
+	m.submitExportM3U()
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("exported playlist missing: %v", err)
 	}
 }
 

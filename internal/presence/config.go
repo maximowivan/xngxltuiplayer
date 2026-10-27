@@ -3,10 +3,11 @@
 package presence
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"tuiplay/internal/atomicfile"
 )
 
 // Config controls the Discord integration.
@@ -22,11 +23,9 @@ type Config struct {
 // Load reads data/discord.json. A missing or invalid file disables presence.
 func Load(dataDir string) Config {
 	cfg := Config{dataDir: dataDir}
-	data, err := os.ReadFile(filepath.Join(dataDir, "discord.json"))
-	if err != nil {
-		return cfg
+	if err := atomicfile.ReadJSON(filepath.Join(dataDir, "discord.json"), &cfg); err != nil {
+		return Config{dataDir: dataDir}
 	}
-	_ = json.Unmarshal(data, &cfg)
 	cfg.dataDir = dataDir
 	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
 	cfg.FallbackImage = strings.TrimSpace(cfg.FallbackImage)
@@ -46,23 +45,7 @@ func Save(dataDir string, cfg Config) error {
 	if cfg.ActivityType <= 0 || cfg.ActivityType > 5 {
 		cfg.ActivityType = 2
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dataDir, "discord.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(path)
-		if err2 := os.Rename(tmp, path); err2 != nil {
-			_ = os.Remove(tmp)
-			return err2
-		}
-	}
-	return nil
+	return atomicfile.WriteJSON(filepath.Join(dataDir, "discord.json"), cfg)
 }
 
 // Configured reports whether the integration can connect.
