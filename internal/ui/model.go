@@ -20,6 +20,7 @@ import (
 	"tuiplay/internal/download"
 	"tuiplay/internal/library"
 	"tuiplay/internal/m3u"
+	"tuiplay/internal/media"
 	"tuiplay/internal/model"
 	"tuiplay/internal/playlist"
 	"tuiplay/internal/presence"
@@ -64,6 +65,8 @@ const (
 	modalDownloads
 	modalImportM3U
 	modalExportM3U
+	modalEditTags
+	modalDuplicates
 )
 
 type toastKind int
@@ -82,6 +85,8 @@ type libraryLoadedMsg struct {
 	err        error
 	background bool
 }
+
+type libraryChangedMsg struct{}
 
 type artLoadedMsg struct {
 	path string
@@ -102,6 +107,10 @@ type Model struct {
 	presenceStatus <-chan presence.Status
 	presenceWarned bool
 
+	mediaController media.Controller
+	lastMediaState  media.State
+	lastMediaUpdate time.Time
+
 	width  int
 	height int
 
@@ -119,6 +128,8 @@ type Model struct {
 	restored    bool
 	refreshing  bool
 	needRefresh bool
+
+	watch <-chan struct{}
 
 	tracks  []model.Track
 	visible []model.Track
@@ -140,6 +151,13 @@ type Model struct {
 	m3uInput       textinput.Model
 	modalCursor    int
 	modalErr       string
+	tags           *tagEditor
+	dupGroups      []library.DuplicateGroup
+	dupGroup       int
+	dupKeeper      int
+	dupOffset      int
+	dupLoading     bool
+	dupMerging     bool
 	pendingTrack   model.Track
 	pendingPaths   []string
 	hasPending     bool
@@ -278,9 +296,29 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.SetWindowTitle("xngxltuiplayer"),
 		m.loadLibraryCmd(false),
+		m.waitLibraryChange(),
+		m.waitMediaCommand(),
 		m.waitPresenceStatus(),
 		tickCmd(),
 	)
+}
+
+// SetLibraryWatch installs the channel used by the music-folder watcher.
+func (m *Model) SetLibraryWatch(ch <-chan struct{}) {
+	m.watch = ch
+}
+
+func (m *Model) waitLibraryChange() tea.Cmd {
+	ch := m.watch
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if _, ok := <-ch; !ok {
+			return nil
+		}
+		return libraryChangedMsg{}
+	}
 }
 
 func tickCmd() tea.Cmd {
@@ -1653,6 +1691,7 @@ func (m *Model) resizeInputs() {
 	m.nameInput.Width = maxInt(20, modalW-8)
 	m.m3uInput.Width = maxInt(20, modalW-8)
 	m.searchInput.Width = maxInt(16, centerW-16)
+	m.resizeTagInputs()
 }
 
 func (m *Model) openAddLink() tea.Cmd {
@@ -1831,9 +1870,17 @@ func (m *Model) closeModal() {
 		m.nameInput.Blur()
 	case modalImportM3U, modalExportM3U:
 		m.m3uInput.Blur()
+	case modalEditTags:
+		if m.tags != nil {
+			m.tags.blur()
+		}
 	}
 	m.modal = modalNone
 	m.modalErr = ""
+	m.tags = nil
+	m.dupGroups = nil
+	m.dupLoading = false
+	m.dupMerging = false
 	m.hasPending = false
 	m.pendingPaths = nil
 	m.deleteTracks = nil
@@ -2233,6 +2280,7 @@ drained:
 		m.lastSave = time.Now()
 	}
 
+	m.syncMedia()
 	m.clampListOffset()
 	m.clampSidebarOffset()
 	return tea.Batch(cmds...)

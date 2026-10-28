@@ -71,6 +71,17 @@ func TestParseColorMode(t *testing.T) {
 	}
 }
 
+func TestParseWatchMode(t *testing.T) {
+	for _, value := range []string{"", "auto", "on", "off", "OFF"} {
+		if _, err := parseWatchMode(value); err != nil {
+			t.Fatalf("parseWatchMode(%q): %v", value, err)
+		}
+	}
+	if _, err := parseWatchMode("sometimes"); err == nil {
+		t.Fatal("expected an error for an unknown watch mode")
+	}
+}
+
 func TestResolveGlyphAndIconModes(t *testing.T) {
 	info := terminal.Info{Glyphs: terminal.GlyphsCompat, Unicode: false}
 	if got := resolveGlyphMode("auto", info); got != ui.GlyphsCompat {

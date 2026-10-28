@@ -154,6 +154,34 @@ func (s *Store) Recent(limit int) []string {
 	return out
 }
 
+// Merge folds statistics for a duplicate track into the keeper. Play counts
+// are combined by taking the larger value, favourites are OR-ed and the latest
+// play time wins.
+func (s *Store) Merge(oldPath, newPath string) error {
+	oldKey := pathKey(oldPath)
+	newKey := pathKey(newPath)
+	if oldKey == newKey {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src, ok := s.tracks[oldKey]
+	if !ok {
+		return nil
+	}
+	dst := s.tracks[newKey]
+	if src.Plays > dst.Plays {
+		dst.Plays = src.Plays
+	}
+	dst.Favorite = dst.Favorite || src.Favorite
+	if src.LastPlayed.After(dst.LastPlayed) {
+		dst.LastPlayed = src.LastPlayed
+	}
+	s.tracks[newKey] = dst
+	delete(s.tracks, oldKey)
+	return s.saveLocked()
+}
+
 // Remove drops all statistics for a deleted track.
 func (s *Store) Remove(path string) error {
 	s.mu.Lock()

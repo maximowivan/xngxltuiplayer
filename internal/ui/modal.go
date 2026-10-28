@@ -36,6 +36,10 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderDownloadsModal(w, contentH)
 	case modalImportM3U, modalExportM3U:
 		return m.renderM3UModal(w, contentH)
+	case modalEditTags:
+		return m.renderTagModal(w, contentH)
+	case modalDuplicates:
+		return m.renderDuplicatesModal(w, contentH)
 	}
 	return ""
 }
@@ -335,6 +339,8 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"I", "import M3U"},
 		{"E", "export M3U"},
 		{"f", "favorite"},
+		{"e", "edit tags"},
+		{"M", "find duplicates"},
 		{"x", "add selection"},
 		{"X", "quick remove from playlist"},
 		{"D / delete", "remove or delete (asks first)"},

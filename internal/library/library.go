@@ -163,7 +163,7 @@ func (l *Library) loadCache() cacheFile {
 	if err := atomicfile.ReadJSON(filepath.Join(l.DataDir, "library.json"), &cache); err != nil {
 		return cacheFile{}
 	}
-	if cache.Version != 2 {
+	if cache.Version != 3 {
 		return cacheFile{}
 	}
 	return cache
@@ -173,7 +173,7 @@ func (l *Library) saveCache(tracks []model.Track) error {
 	if err := os.MkdirAll(l.DataDir, 0o755); err != nil {
 		return err
 	}
-	return atomicfile.WriteJSON(filepath.Join(l.DataDir, "library.json"), cacheFile{Version: 2, Tracks: tracks})
+	return atomicfile.WriteJSON(filepath.Join(l.DataDir, "library.json"), cacheFile{Version: 3, Tracks: tracks})
 }
 
 func readTrackMetadata(path string, info os.FileInfo) model.Track {
@@ -205,6 +205,9 @@ func readTrackMetadata(path string, info os.FileInfo) model.Track {
 			if y := md.Year(); y > 0 {
 				t.Year = strconv.Itoa(y)
 			}
+			if n, _ := md.Track(); n > 0 {
+				t.TrackNumber = strconv.Itoa(n)
+			}
 			t.HasArt = md.Picture() != nil
 		}
 		if strings.EqualFold(filepath.Ext(path), ".mp3") {
@@ -223,6 +226,9 @@ func readTrackMetadata(path string, info os.FileInfo) model.Track {
 					}
 					if im.Year != "" {
 						t.Year = im.Year
+					}
+					if im.TrackNumber != "" {
+						t.TrackNumber = im.TrackNumber
 					}
 					t.HasArt = im.HasArt
 				}

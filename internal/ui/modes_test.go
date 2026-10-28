@@ -91,7 +91,7 @@ func TestASCIIModeUsesPrintableASCII(t *testing.T) {
 		modalNone, modalAddLink, modalNewPlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
-		modalImportM3U, modalExportM3U,
+		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates,
 	} {
 		m.modal = modal
 		m.width, m.height = 110, 32

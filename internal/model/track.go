@@ -8,18 +8,19 @@ import (
 
 // Track is a single audio file known to the library.
 type Track struct {
-	Path     string        `json:"path"`
-	Title    string        `json:"title"`
-	Artist   string        `json:"artist"`
-	Album    string        `json:"album"`
-	Year     string        `json:"year"`
-	Duration time.Duration `json:"duration"`
-	CoverURL string        `json:"cover_url,omitempty"`
-	HasArt   bool          `json:"has_art"`
-	Size     int64         `json:"size"`
-	ModTime  int64         `json:"mod_time"`
-	Added    time.Time     `json:"added"`
-	Source   string        `json:"source,omitempty"`
+	Path        string        `json:"path"`
+	Title       string        `json:"title"`
+	Artist      string        `json:"artist"`
+	Album       string        `json:"album"`
+	Year        string        `json:"year"`
+	TrackNumber string        `json:"track_number,omitempty"`
+	Duration    time.Duration `json:"duration"`
+	CoverURL    string        `json:"cover_url,omitempty"`
+	HasArt      bool          `json:"has_art"`
+	Size        int64         `json:"size"`
+	ModTime     int64         `json:"mod_time"`
+	Added       time.Time     `json:"added"`
+	Source      string        `json:"source,omitempty"`
 }
 
 // DisplayTitle returns a non-empty title.

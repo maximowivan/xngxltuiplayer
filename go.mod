@@ -10,6 +10,10 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/charmbracelet/x/term v0.2.1
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
+	github.com/fsnotify/fsnotify v1.10.1
+	github.com/go-flac/flacvorbis v0.2.0
+	github.com/go-flac/go-flac v1.0.0
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/gopxl/beep/v2 v2.1.1
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/image v0.47.0

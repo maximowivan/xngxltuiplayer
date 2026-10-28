@@ -1111,6 +1111,19 @@ func (m *Model) renderModalHints(w int) string {
 			keyHint("esc", "close"),
 			keyHint("?", "close"),
 		)
+	case modalEditTags:
+		return hintLine(
+			keyHint("ctrl+s", "save"),
+			keyHint("tab", "next field"),
+			keyHint("esc", "cancel"),
+		)
+	case modalDuplicates:
+		return hintLine(
+			keyHint(currentGlyphs.UpDown, "keeper"),
+			keyHint("n / p", "group"),
+			keyHint("enter", "merge"),
+			keyHint("esc", "close"),
+		)
 	}
 	return ""
 }

@@ -142,6 +142,7 @@ func TestViewFrames(t *testing.T) {
 		modalConfirmDeletePlaylist,
 		modalHelp,
 		modalDownloads,
+		modalEditTags, modalDuplicates,
 	} {
 		m.modal = modal
 		if modal == modalConfirmDeleteTrack || modal == modalConfirmRemoveFromPlaylist {

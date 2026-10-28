@@ -29,6 +29,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case libraryLoadedMsg:
 		return m, m.handleLibraryLoaded(msg)
 
+	case libraryChangedMsg:
+		cmds := []tea.Cmd{m.waitLibraryChange()}
+		if cmd := m.startRefresh(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+
+	case tagsSavedMsg:
+		return m, m.handleTagsSaved(msg)
+
+	case duplicatesLoadedMsg:
+		m.handleDuplicatesLoaded(msg)
+		return m, nil
+
+	case duplicatesMergedMsg:
+		return m, m.handleDuplicatesMerged(msg)
+
+	case mediaCommandMsg:
+		return m, tea.Batch(m.handleMediaCommand(msg.command), m.waitMediaCommand())
+
 	case artLoadedMsg:
 		m.handleArtLoaded(msg)
 		return m, nil
@@ -196,6 +216,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		m.toggleFavorite()
 		return m, nil
+	case "e":
+		return m, m.openTagEditor()
+	case "M":
+		return m, m.openDuplicates()
 	case "D":
 		if m.focus == focusSidebar && m.sidebarCursor > 2 {
 			m.openDeletePlaylist()
@@ -352,6 +376,45 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.m3uInput, cmd = m.m3uInput.Update(msg)
 		return m, cmd
+
+	case modalEditTags:
+		switch key {
+		case "esc":
+			m.closeModal()
+			return m, nil
+		case "tab", "down":
+			return m, m.tags.focusField(m.tags.focus + 1)
+		case "shift+tab", "up":
+			return m, m.tags.focusField(m.tags.focus - 1)
+		case "ctrl+s", "enter":
+			return m, m.submitTagEdit()
+		}
+		if m.tags == nil {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.tags.fields[m.tags.focus].input, cmd = m.tags.fields[m.tags.focus].input.Update(msg)
+		return m, cmd
+
+	case modalDuplicates:
+		if m.dupMerging || m.dupLoading {
+			return m, nil
+		}
+		switch key {
+		case "esc", "q":
+			m.closeModal()
+		case "up", "k":
+			m.moveDuplicateKeeper(-1)
+		case "down", "j":
+			m.moveDuplicateKeeper(1)
+		case "n", "pgdown", "]":
+			m.moveDuplicateGroup(1)
+		case "p", "pgup", "[":
+			m.moveDuplicateGroup(-1)
+		case "enter":
+			return m, m.mergeDuplicateGroup()
+		}
+		return m, nil
 
 	case modalAddToPlaylist:
 		items := m.playlists.List()

@@ -430,6 +430,60 @@ func (s *Store) Save() error {
 	return s.saveLocked()
 }
 
+// ReplacePathEverywhere replaces oldPath with newPath in every playlist while
+// preserving order and removing duplicate references to newPath. It returns
+// how many playlist entries were changed or dropped.
+func (s *Store) ReplacePathEverywhere(oldPath, newPath string) (int, error) {
+	oldPath = filepath.Clean(strings.TrimSpace(oldPath))
+	newPath = filepath.Clean(strings.TrimSpace(newPath))
+	if oldPath == "" || newPath == "" || samePath(oldPath, newPath) {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	backup := make([]Playlist, len(s.items))
+	for i := range s.items {
+		backup[i] = s.items[i].Clone()
+	}
+	changed := 0
+	for i := range s.items {
+		seenNew := false
+		out := make([]string, 0, len(s.items[i].Tracks))
+		modified := false
+		for _, path := range s.items[i].Tracks {
+			if samePath(path, oldPath) {
+				modified = true
+				if seenNew {
+					changed++
+					continue
+				}
+				path = newPath
+				seenNew = true
+				changed++
+			} else if samePath(path, newPath) {
+				if seenNew {
+					changed++
+					continue
+				}
+				seenNew = true
+			}
+			out = append(out, path)
+		}
+		if modified {
+			s.items[i].Tracks = out
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	if err := s.saveLocked(); err != nil {
+		s.items = backup
+		return 0, err
+	}
+	return changed, nil
+}
+
 func (s *Store) saveLocked() error {
 	f := fileFormat{Version: 1, Playlists: s.items}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {

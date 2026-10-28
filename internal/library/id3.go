@@ -9,13 +9,14 @@ import (
 
 // id3Metadata is the subset of tag data needed by the library.
 type id3Metadata struct {
-	Title     string
-	Artist    string
-	Album     string
-	Year      string
-	CoverURL  string
-	SourceURL string
-	HasArt    bool
+	Title       string
+	Artist      string
+	Album       string
+	Year        string
+	TrackNumber string
+	CoverURL    string
+	SourceURL   string
+	HasArt      bool
 }
 
 // readID3v2 reads MP3 tags with bogem/id3v2. It is used as a fallback because
@@ -27,13 +28,14 @@ func readID3v2(path string) (id3Metadata, error) {
 	}
 	defer tag.Close()
 	return id3Metadata{
-		Title:     strings.TrimSpace(tag.Title()),
-		Artist:    strings.TrimSpace(tag.Artist()),
-		Album:     strings.TrimSpace(tag.Album()),
-		Year:      strings.TrimSpace(tag.Year()),
-		CoverURL:  id3CoverURL(tag),
-		SourceURL: id3SourceURL(tag),
-		HasArt:    id3PictureFrame(tag) != nil,
+		Title:       strings.TrimSpace(tag.Title()),
+		Artist:      strings.TrimSpace(tag.Artist()),
+		Album:       strings.TrimSpace(tag.Album()),
+		Year:        strings.TrimSpace(tag.Year()),
+		TrackNumber: strings.TrimSpace(tag.GetTextFrame(tag.CommonID("Track number/Position in set")).Text),
+		CoverURL:    id3CoverURL(tag),
+		SourceURL:   id3SourceURL(tag),
+		HasArt:      id3PictureFrame(tag) != nil,
 	}, nil
 }
 

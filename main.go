@@ -19,6 +19,7 @@ import (
 	"tuiplay/internal/download"
 	"tuiplay/internal/instance"
 	"tuiplay/internal/library"
+	"tuiplay/internal/media"
 	"tuiplay/internal/playlist"
 	"tuiplay/internal/presence"
 	"tuiplay/internal/session"
@@ -33,7 +34,7 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() {
 	defer recoverPanic()
@@ -45,6 +46,7 @@ func main() {
 		ascii     = flag.Bool("ascii", false, "use the plain ASCII UI (compatibility mode)")
 		uiMode    = flag.String("ui", "auto", "UI mode: auto, full, compat or ascii")
 		colorMode = flag.String("color", "auto", "color mode: auto, truecolor, 256, 16 or none")
+		watchMode = flag.String("watch", "auto", "watch the music folder: auto, on or off")
 		icons     = flag.String("icons", "auto", "icon mode: auto, unicode or ascii")
 		discordID = flag.String("discord", "", "Discord application client id for Rich Presence")
 		check     = flag.Bool("check", false, "check directories, external tools and audio output, then exit")
@@ -66,6 +68,10 @@ func main() {
 		fatal(err)
 	}
 	colorModeValue, err := parseColorMode(*colorMode)
+	if err != nil {
+		fatal(err)
+	}
+	watchValue, err := parseWatchMode(*watchMode)
 	if err != nil {
 		fatal(err)
 	}
@@ -100,7 +106,7 @@ func main() {
 	}
 
 	if *check {
-		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII)
+		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII, watchValue)
 		applog.Close()
 		if !ok {
 			os.Exit(1)
@@ -139,6 +145,16 @@ func main() {
 	}
 
 	lib := library.New(cfg.MusicDir, cfg.DataDir)
+	var libWatcher *library.Watcher
+	if watchValue != "off" {
+		libWatcher, err = library.NewWatcher(cfg.MusicDir)
+		if err != nil {
+			applog.Printf("library watcher: %v", err)
+		} else {
+			defer libWatcher.Close()
+			applog.Printf("library watcher started for %s", cfg.MusicDir)
+		}
+	}
 	trackStats := stats.Load(cfg.DataDir)
 	engine := audio.New(float64(state.Volume) / 100)
 	mgr := download.NewManager(download.Options{
@@ -167,6 +183,16 @@ func main() {
 	ui.SetMouseAvailable(termInfo.Mouse)
 	ui.SetStartupNote(termInfo.StartupNote(terminalGlyphMode(glyphMode)))
 	model := ui.New(cfg, lib, playlists, trackStats, engine, mgr, state)
+	if libWatcher != nil {
+		model.SetLibraryWatch(libWatcher.Changes)
+	}
+	if mediaCtl, mediaErr := media.Start(); mediaErr != nil {
+		applog.Printf("media keys: %v", mediaErr)
+	} else {
+		defer mediaCtl.Close()
+		model.SetMediaController(mediaCtl)
+		applog.Printf("media keys: %s", media.Available())
+	}
 	if rpc != nil {
 		model.SetPresence(rpc)
 	}
@@ -227,6 +253,17 @@ func parseColorMode(value string) (string, error) {
 		return strings.ToLower(strings.TrimSpace(value)), nil
 	default:
 		return "", fmt.Errorf("invalid -color value %q: expected auto, truecolor, 256, 16 or none", value)
+	}
+}
+
+func parseWatchMode(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return "auto", nil
+	case "on", "off":
+		return strings.ToLower(strings.TrimSpace(value)), nil
+	default:
+		return "", fmt.Errorf("invalid -watch value %q: expected auto, on or off", value)
 	}
 }
 
@@ -354,7 +391,7 @@ func runUpdate(cfg config.Config) {
 	applog.Close()
 }
 
-func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool) bool {
+func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool, watchMode string) bool {
 	ok := true
 	fmt.Printf("%s %s\n\n", appName, version)
 
@@ -369,9 +406,11 @@ func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Conf
 	fmt.Printf("  ui mode      %s\n", glyphMode)
 	fmt.Printf("  icon mode    %s\n", iconMode)
 	fmt.Printf("  color mode   %s\n", colorProfile)
+	fmt.Printf("  watch        %s\n", watchMode)
 	if p := portableTerminalPath(); p != "" {
 		fmt.Printf("  terminal app portable Windows Terminal (%s)\n", p)
 	}
+	fmt.Printf("  media keys   %s\n", media.Available())
 	if termInfo.Console && !termInfo.VT {
 		ok = false
 	}
