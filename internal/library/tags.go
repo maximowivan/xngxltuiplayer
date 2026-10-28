@@ -1,7 +1,10 @@
 package library
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,14 +17,20 @@ import (
 	"tuiplay/internal/model"
 )
 
-// TagEdit is the editable subset of a track's tags. Cover art is deliberately
-// not changed here: it is preserved byte-for-byte by the writers.
+// MaxCoverInput limits the source image accepted by the tag editor. The
+// image is re-encoded as JPEG before it is embedded.
+const MaxCoverInput = 20 << 20
+
+// TagEdit is the editable subset of a track's tags. When CoverData is nil and
+// RemoveCover is false, the existing cover is preserved byte-for-byte.
 type TagEdit struct {
 	Title       string
 	Artist      string
 	Album       string
 	Year        string
 	TrackNumber string
+	CoverData   []byte
+	RemoveCover bool
 }
 
 // UpdateTags writes tags atomically and updates the library cache entry.
@@ -33,6 +42,17 @@ func (l *Library) UpdateTags(track model.Track, edit TagEdit) (model.Track, erro
 		return track, fmt.Errorf("tag editing is supported for MP3 and FLAC only")
 	}
 	edit = normalizeTagEdit(edit)
+	if len(edit.CoverData) > MaxCoverInput {
+		return track, fmt.Errorf("cover image is too large: %d bytes (limit %d)", len(edit.CoverData), MaxCoverInput)
+	}
+	var coverJPEG []byte
+	if len(edit.CoverData) > 0 {
+		var coverErr error
+		coverJPEG, coverErr = NormalizeCover(edit.CoverData)
+		if coverErr != nil {
+			return track, fmt.Errorf("prepare cover: %w", coverErr)
+		}
+	}
 
 	l.scanMu.Lock()
 	defer l.scanMu.Unlock()
@@ -77,9 +97,9 @@ func (l *Library) UpdateTags(track model.Track, edit TagEdit) (model.Track, erro
 	}
 
 	if ext == ".mp3" {
-		err = writeMP3Tags(tmpName, edit)
+		err = writeMP3Tags(tmpName, edit, coverJPEG)
 	} else {
-		err = writeFLACTags(tmpName, edit)
+		err = writeFLACTags(tmpName, edit, coverJPEG)
 	}
 	if err != nil {
 		return track, err
@@ -100,6 +120,11 @@ func (l *Library) UpdateTags(track model.Track, edit TagEdit) (model.Track, erro
 	track.Album = edit.Album
 	track.Year = edit.Year
 	track.TrackNumber = edit.TrackNumber
+	if len(coverJPEG) > 0 {
+		track.HasArt = true
+	} else if edit.RemoveCover {
+		track.HasArt = false
+	}
 
 	l.mu.Lock()
 	for i := range l.tracks {
@@ -138,7 +163,7 @@ func normalizeTagEdit(edit TagEdit) TagEdit {
 	return edit
 }
 
-func writeMP3Tags(path string, edit TagEdit) error {
+func writeMP3Tags(path string, edit TagEdit, coverJPEG []byte) error {
 	tag, err := id3v2.Open(path, id3v2.Options{Parse: true})
 	if err != nil {
 		return fmt.Errorf("open MP3 tags: %w", err)
@@ -152,10 +177,57 @@ func writeMP3Tags(path string, edit TagEdit) error {
 	setID3(tag, tag.CommonID("Album/Movie/Show title"), edit.Album)
 	setID3(tag, tag.CommonID("Year"), edit.Year)
 	setID3(tag, tag.CommonID("Track number/Position in set"), edit.TrackNumber)
+	if len(coverJPEG) > 0 {
+		replaceFrontCoverMP3(tag, coverJPEG)
+	} else if edit.RemoveCover {
+		removeFrontCoverMP3(tag)
+	}
 	if err := tag.Save(); err != nil {
 		return fmt.Errorf("save MP3 tags: %w", err)
 	}
 	return nil
+}
+
+// replaceFrontCoverMP3 preserves additional pictures (back cover, artist,
+// booklet) while replacing the front cover.
+func replaceFrontCoverMP3(tag *id3v2.Tag, data []byte) {
+	keep := picturesExceptFront(tag)
+	tag.DeleteFrames("APIC")
+	for _, pic := range keep {
+		tag.AddAttachedPicture(pic)
+	}
+	tag.AddAttachedPicture(id3v2.PictureFrame{
+		Encoding:    id3v2.EncodingUTF8,
+		MimeType:    "image/jpeg",
+		PictureType: id3v2.PTFrontCover,
+		Description: "cover",
+		Picture:     data,
+	})
+}
+
+func removeFrontCoverMP3(tag *id3v2.Tag) {
+	keep := picturesExceptFront(tag)
+	tag.DeleteFrames("APIC")
+	for _, pic := range keep {
+		tag.AddAttachedPicture(pic)
+	}
+}
+
+func picturesExceptFront(tag *id3v2.Tag) []id3v2.PictureFrame {
+	var keep []id3v2.PictureFrame
+	for _, frame := range tag.GetFrames("APIC") {
+		switch pic := frame.(type) {
+		case id3v2.PictureFrame:
+			if pic.PictureType != id3v2.PTFrontCover {
+				keep = append(keep, pic)
+			}
+		case *id3v2.PictureFrame:
+			if pic != nil && pic.PictureType != id3v2.PTFrontCover {
+				keep = append(keep, *pic)
+			}
+		}
+	}
+	return keep
 }
 
 func setID3(tag *id3v2.Tag, id, value string) {
@@ -166,7 +238,7 @@ func setID3(tag *id3v2.Tag, id, value string) {
 	tag.AddTextFrame(id, id3v2.EncodingUTF8, value)
 }
 
-func writeFLACTags(path string, edit TagEdit) error {
+func writeFLACTags(path string, edit TagEdit, coverJPEG []byte) error {
 	f, err := flac.ParseFile(path)
 	if err != nil {
 		return fmt.Errorf("open FLAC tags: %w", err)
@@ -200,11 +272,87 @@ func writeFLACTags(path string, edit TagEdit) error {
 	} else {
 		f.Meta = append(f.Meta, &block)
 	}
+
+	if len(coverJPEG) > 0 {
+		if err := replaceFrontCoverFLAC(f, coverJPEG); err != nil {
+			return err
+		}
+	} else if edit.RemoveCover {
+		removeFrontCoverFLAC(f)
+	}
+
 	data := f.Marshal()
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write FLAC tags: %w", err)
 	}
 	return nil
+}
+
+func replaceFrontCoverFLAC(f *flac.File, data []byte) error {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("read cover dimensions: %w", err)
+	}
+	removeFrontCoverFLAC(f)
+	block := encodeFLACPicture(data, cfg.Width, cfg.Height)
+	insertFLACBlock(f, block)
+	return nil
+}
+
+// removeFrontCoverFLAC drops only PICTURE blocks marked as a front cover.
+func removeFrontCoverFLAC(f *flac.File) {
+	kept := f.Meta[:0]
+	for _, block := range f.Meta {
+		if block.Type == flac.Picture && flacPictureType(block) == 3 {
+			continue
+		}
+		kept = append(kept, block)
+	}
+	f.Meta = kept
+}
+
+func flacPictureType(block *flac.MetaDataBlock) uint32 {
+	if block == nil || block.Type != flac.Picture || len(block.Data) < 4 {
+		return 0
+	}
+	return binary.BigEndian.Uint32(block.Data[:4])
+}
+
+func encodeFLACPicture(data []byte, width, height int) flac.MetaDataBlock {
+	var buf bytes.Buffer
+	writeUint32 := func(v uint32) {
+		var b [4]byte
+		binary.BigEndian.PutUint32(b[:], v)
+		buf.Write(b[:])
+	}
+	const mime = "image/jpeg"
+	const description = "cover"
+	writeUint32(3) // front cover
+	writeUint32(uint32(len(mime)))
+	buf.WriteString(mime)
+	writeUint32(uint32(len(description)))
+	buf.WriteString(description)
+	writeUint32(uint32(width))
+	writeUint32(uint32(height))
+	writeUint32(24) // bits per pixel
+	writeUint32(0)  // palette colors
+	writeUint32(uint32(len(data)))
+	buf.Write(data)
+	return flac.MetaDataBlock{Type: flac.Picture, Data: buf.Bytes()}
+}
+
+// insertFLACBlock puts a PICTURE before padding when possible so the file
+// keeps its conventional metadata layout.
+func insertFLACBlock(f *flac.File, block flac.MetaDataBlock) {
+	for i, existing := range f.Meta {
+		if existing.Type == flac.Padding {
+			f.Meta = append(f.Meta, nil)
+			copy(f.Meta[i+1:], f.Meta[i:])
+			f.Meta[i] = &block
+			return
+		}
+	}
+	f.Meta = append(f.Meta, &block)
 }
 
 func setVorbis(vc *flacvorbis.MetaDataBlockVorbisComment, key, value string) {

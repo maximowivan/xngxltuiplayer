@@ -1124,6 +1124,22 @@ func (m *Model) renderModalHints(w int) string {
 			keyHint("enter", "merge"),
 			keyHint("esc", "close"),
 		)
+	case modalThemes:
+		return hintLine(
+			keyHint(currentGlyphs.UpDown, "preview"),
+			keyHint("enter", "apply"),
+			keyHint("esc", "cancel"),
+		)
+	case modalUpdate:
+		switch m.updatePhase {
+		case "", "error":
+			return hintLine(
+				keyHint("enter", "update"),
+				keyHint("esc", "later"),
+			)
+		default:
+			return dimStyle.Render("Please wait: the player will restart after the update.")
+		}
 	}
 	return ""
 }

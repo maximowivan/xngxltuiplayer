@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"tuiplay/internal/library"
 	"tuiplay/internal/model"
+	"tuiplay/internal/updater"
 )
 
 func TestTagEditorOpensForSelectedTrack(t *testing.T) {
@@ -27,6 +29,92 @@ func TestTagEditorOpensForSelectedTrack(t *testing.T) {
 		t.Fatalf("title field = %q", got)
 	}
 	assertFrame(t, m, "tag editor")
+}
+
+func TestTagEditorCoverControls(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.width, m.height = 110, 32
+	m.cursor = 0
+	m.openTagEditor()
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if !m.tags.removeCover {
+		t.Fatal("x did not mark the cover for removal")
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	if m.tags.removeCover {
+		t.Fatal("focusing the cover field should keep the existing cover")
+	}
+	if m.tags.focus != len(m.tags.fields) {
+		t.Fatalf("focus = %d, want cover field %d", m.tags.focus, len(m.tags.fields))
+	}
+	m.tags.cover.SetValue(filepath.Join(t.TempDir(), "missing.jpg"))
+	if cmd := m.submitTagEdit(); cmd != nil {
+		t.Fatal("missing cover should fail before starting playback save")
+	}
+	if m.tags.err == "" || !strings.Contains(m.tags.err, "Cover:") {
+		t.Fatalf("cover error = %q", m.tags.err)
+	}
+	assertFrame(t, m, "tag editor")
+}
+
+func TestUpdateCheckOpensPromptOnlyForNewerVersion(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.updateVersion = "0.4.0"
+	m.handleUpdateChecked(updateCheckedMsg{release: updater.Release{TagName: "v0.4.0"}})
+	if m.modal == modalUpdate {
+		t.Fatal("same version must not open the update prompt")
+	}
+	m.handleUpdateChecked(updateCheckedMsg{release: updater.Release{TagName: "v0.4.1", HTMLURL: "https://example.test"}})
+	if m.modal != modalUpdate || !m.updateAvailable {
+		t.Fatalf("modal=%v available=%v", m.modal, m.updateAvailable)
+	}
+	assertFrame(t, m, "update prompt")
+}
+
+func TestUpdateProgressAndErrorStates(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.updateVersion = "0.4.0"
+	m.updateRelease = updater.Release{TagName: "v0.4.1"}
+	m.openUpdatePrompt()
+	m.updateStaging = true
+	m.handleUpdateProgress(updateProgressMsg{progress: updater.Progress{
+		Phase: "download", Done: 2 << 20, Total: 4 << 20, Percent: 0.5,
+	}})
+	if m.updatePhase != "download" || m.updatePercent != 0.5 {
+		t.Fatalf("download state = %+v", m)
+	}
+	assertFrame(t, m, "update progress")
+	m.handleUpdateProgress(updateProgressMsg{progress: updater.Progress{Phase: "verify"}})
+	if m.updatePhase != "verify" {
+		t.Fatalf("phase = %q, want verify", m.updatePhase)
+	}
+	cmd := m.handleUpdateStageDone(updateStageDoneMsg{err: os.ErrPermission})
+	if cmd != nil {
+		t.Fatal("failed update should not schedule apply")
+	}
+	if m.updatePhase != "error" || m.updateErr == "" {
+		t.Fatalf("error state = %+v", m)
+	}
+	assertFrame(t, m, "update error")
+}
+
+func TestUpdateStageDoneReady(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.updateRelease = updater.Release{TagName: "v0.4.1"}
+	m.openUpdatePrompt()
+	m.updateStaging = true
+	cmd := m.handleUpdateStageDone(updateStageDoneMsg{stage: t.TempDir()})
+	if cmd == nil {
+		t.Fatal("successful stage should schedule apply")
+	}
+	if m.updatePhase != "ready" || m.updateStaging {
+		t.Fatalf("ready state = %+v", m)
+	}
+	assertFrame(t, m, "update ready")
 }
 
 func TestFeatureHotkeys(t *testing.T) {

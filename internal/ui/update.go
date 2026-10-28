@@ -49,6 +49,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mediaCommandMsg:
 		return m, tea.Batch(m.handleMediaCommand(msg.command), m.waitMediaCommand())
 
+	case updateCheckedMsg:
+		m.handleUpdateChecked(msg)
+		return m, nil
+
+	case updateProgressMsg:
+		m.handleUpdateProgress(msg)
+		return m, nil
+
+	case updateStageDoneMsg:
+		return m, m.handleUpdateStageDone(msg)
+
+	case updateApplyMsg:
+		return m, m.handleUpdateApply(msg)
+
 	case artLoadedMsg:
 		m.handleArtLoaded(msg)
 		return m, nil
@@ -68,6 +82,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "ctrl+c" {
+		if m.modal == modalThemes && m.themeBefore != "" {
+			m.theme = applyTheme(m.themeBefore)
+		}
 		m.saveSession()
 		return m, tea.Quit
 	}
@@ -202,6 +219,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "T":
 		m.cycleTheme(-1)
 		return m, nil
+	case "ctrl+t":
+		m.openThemePicker()
+		return m, nil
 	case "c":
 		m.coverMode = !m.coverMode
 		return m, nil
@@ -220,6 +240,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openTagEditor()
 	case "M":
 		return m, m.openDuplicates()
+	case "U":
+		if m.updateAvailable && m.modal == modalNone {
+			m.openUpdatePrompt()
+		}
+		return m, nil
 	case "D":
 		if m.focus == focusSidebar && m.sidebarCursor > 2 {
 			m.openDeletePlaylist()
@@ -386,6 +411,20 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.tags.focusField(m.tags.focus + 1)
 		case "shift+tab", "up":
 			return m, m.tags.focusField(m.tags.focus - 1)
+		case "c":
+			if m.tags != nil {
+				m.tags.removeCover = false
+				return m, m.tags.focusField(len(m.tags.fields))
+			}
+			return m, nil
+		case "x":
+			if m.tags != nil {
+				m.tags.removeCover = !m.tags.removeCover
+				if m.tags.removeCover {
+					m.tags.cover.SetValue("")
+				}
+			}
+			return m, nil
 		case "ctrl+s", "enter":
 			return m, m.submitTagEdit()
 		}
@@ -393,8 +432,29 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
+		if m.tags.focus >= len(m.tags.fields) {
+			m.tags.cover, cmd = m.tags.cover.Update(msg)
+			if strings.TrimSpace(m.tags.cover.Value()) != "" {
+				m.tags.removeCover = false
+			}
+			return m, cmd
+		}
 		m.tags.fields[m.tags.focus].input, cmd = m.tags.fields[m.tags.focus].input.Update(msg)
 		return m, cmd
+
+	case modalThemes:
+		return m, m.handleThemePickerKey(key)
+
+	case modalUpdate:
+		if m.updatePhase == "" || m.updatePhase == "error" {
+			switch key {
+			case "esc", "n", "q":
+				m.closeModal()
+			case "enter", "y":
+				return m, m.startUpdateCmd()
+			}
+		}
+		return m, nil
 
 	case modalDuplicates:
 		if m.dupMerging || m.dupLoading {

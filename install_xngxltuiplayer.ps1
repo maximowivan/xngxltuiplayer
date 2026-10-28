@@ -51,6 +51,7 @@ param(
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ProgressPreference = "SilentlyContinue"
+try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { }
 
 function Write-Step {
     param([string]$Text)
@@ -73,6 +74,97 @@ function Fail {
     Write-Host ""
     Write-Host "ОШИБКА: $Text" -ForegroundColor Red
     exit 1
+}
+
+function Format-Size {
+    param([double]$Bytes)
+    if ($Bytes -ge 1GB) { return ("{0:N1} ГБ" -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ("{0:N1} МБ" -f ($Bytes / 1MB)) }
+    if ($Bytes -ge 1KB) { return ("{0:N0} КБ" -f ($Bytes / 1KB)) }
+    return ("{0:N0} Б" -f $Bytes)
+}
+
+function Write-ProgressLine {
+    param([string]$Text)
+    if ([Console]::IsOutputRedirected) {
+        Write-Host "    $Text"
+        return
+    }
+    $width = 0
+    try { $width = [Console]::WindowWidth } catch { }
+    if ($width -le 0) { $width = 100 }
+    $max = [Math]::Max(10, $width - 1)
+    if ($Text.Length -ge $max) { $Text = $Text.Substring(0, $max) }
+    Write-Host ("`r" + $Text.PadRight($max)) -NoNewline
+}
+
+function Get-RemoteFile {
+    param(
+        [string]$Uri,
+        [string]$OutFile,
+        [string]$Label = "Файл",
+        [hashtable]$Headers = @{},
+        [int64]$ExpectedSize = 0,
+        [int]$TimeoutSec = 900
+    )
+
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+    foreach ($key in $Headers.Keys) {
+        [void]$client.DefaultRequestHeaders.TryAddWithoutValidation($key, $Headers[$key])
+    }
+    try {
+        $resp = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        if (-not $resp.IsSuccessStatusCode) {
+            throw ("HTTP {0} {1}" -f [int]$resp.StatusCode, $resp.ReasonPhrase)
+        }
+        $total = [int64]0
+        if ($resp.Content.Headers.ContentLength) {
+            $total = [int64]$resp.Content.Headers.ContentLength
+        }
+        if ($total -le 0 -and $ExpectedSize -gt 0) {
+            $total = $ExpectedSize
+        }
+        $stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $file = [IO.File]::Open($OutFile, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $buffer = New-Object byte[] 131072
+        $done = [int64]0
+        $last = [DateTime]::MinValue
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $file.Write($buffer, 0, $read)
+                $done += $read
+                $now = [DateTime]::UtcNow
+                if (($now - $last).TotalMilliseconds -ge 250 -or ($total -gt 0 -and $done -ge $total)) {
+                    $last = $now
+                    $speed = ""
+                    if ($watch.Elapsed.TotalSeconds -gt 1) {
+                        $speed = " · " + (Format-Size ($done / $watch.Elapsed.TotalSeconds)) + "/с"
+                    }
+                    if ($total -gt 0) {
+                        $pct = [Math]::Min(100, [Math]::Floor($done * 100 / $total))
+                        Write-ProgressLine ("{0}: {1} / {2} ({3}%){4}" -f $Label, (Format-Size $done), (Format-Size $total), $pct, $speed)
+                    } else {
+                        Write-ProgressLine ("{0}: {1}{2}" -f $Label, (Format-Size $done), $speed)
+                    }
+                }
+            }
+        } finally {
+            $file.Close()
+            $stream.Close()
+            $resp.Dispose()
+        }
+        Write-Host ""
+        Write-Info ("{0}: готово, {1}" -f $Label, (Format-Size $done))
+    } catch {
+        Write-Host ""
+        Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+        throw
+    } finally {
+        $client.Dispose()
+    }
 }
 
 function Refresh-Path {
@@ -128,6 +220,7 @@ function Install-Tool {
     )
 
     Write-Step "Установка $Name ($PackageId)"
+    Write-Info "winget скачивает пакет и зависимости; прогресс в МБ показывается ниже."
     $userArgs = $wingetArgs + @("--scope", "user")
     & winget @userArgs
     Refresh-Path
@@ -205,8 +298,8 @@ function Install-PortableWindowsTerminal {
         $zip = $ZipPath
         if (-not $zip) {
             $zip = Join-Path $temp "windows-terminal.zip"
-            Write-Info "Скачивание Windows Terminal $($script:TerminalVersion) (~12 МБ)..."
-            Invoke-WebRequest -Uri $script:TerminalUrl -OutFile $zip -UseBasicParsing `
+            Write-Info "Скачивание Windows Terminal $($script:TerminalVersion)..."
+            Get-RemoteFile -Uri $script:TerminalUrl -OutFile $zip -Label "Windows Terminal" `
                 -Headers @{ "User-Agent" = "xngxltuiplayer-installer" } -TimeoutSec 180
             $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actual -ne $script:TerminalSha256) {
@@ -395,8 +488,10 @@ try {
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 
         Write-Step "Скачивание"
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -Headers $headers -TimeoutSec 180
-        Invoke-WebRequest -Uri $shaAsset.browser_download_url -OutFile $shaFile -UseBasicParsing -Headers $headers -TimeoutSec 30
+        Get-RemoteFile -Uri $asset.browser_download_url -OutFile $zip -Label "Релиз xngxltuiplayer" `
+            -Headers $headers -ExpectedSize ([int64]$asset.size) -TimeoutSec 300
+        Get-RemoteFile -Uri $shaAsset.browser_download_url -OutFile $shaFile -Label "SHA256" `
+            -Headers $headers -TimeoutSec 60
 
         Write-Step "Проверка SHA256"
         $expected = ((Get-Content -LiteralPath $shaFile -Raw) -split "\s+")[0].ToLowerInvariant()

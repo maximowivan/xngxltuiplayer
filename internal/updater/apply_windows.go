@@ -50,7 +50,20 @@ try {
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     Write-Log "updated $InstallDir"
     if (-not $NoRestart) {
-        Start-Process -FilePath $target -WorkingDirectory $InstallDir
+        $wt = Join-Path $InstallDir "terminal\wt.exe"
+        $restarted = $false
+        if (Test-Path -LiteralPath $wt) {
+            try {
+                $wtArgs = '-d "{0}" "{1}"' -f $InstallDir, $target
+                Start-Process -FilePath $wt -ArgumentList $wtArgs -WorkingDirectory $InstallDir
+                $restarted = $true
+            } catch {
+                Write-Log ("Windows Terminal restart failed: " + $_.Exception.Message)
+            }
+        }
+        if (-not $restarted) {
+            Start-Process -FilePath $target -WorkingDirectory $InstallDir
+        }
     }
 } catch {
     Write-Log ("FAILED: " + $_.Exception.Message)

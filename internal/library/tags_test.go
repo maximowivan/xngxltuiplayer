@@ -167,3 +167,167 @@ func TestUpdateTagsRejectsUnsupportedFormat(t *testing.T) {
 		t.Fatalf("error = %v, want unsupported format", err)
 	}
 }
+
+func TestUpdateMP3CoverReplaceAndRemove(t *testing.T) {
+	base := t.TempDir()
+	musicDir := filepath.Join(base, "music")
+	dataDir := filepath.Join(base, "data")
+	if err := os.MkdirAll(musicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(musicDir, "cover.mp3")
+	makeAudio(t, path, "mp3")
+
+	// Start with a front cover and a back cover; replacing the front must not
+	// discard the extra picture.
+	tagFile, err := id3v2.Open(path, id3v2.Options{Parse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagFile.AddAttachedPicture(id3v2.PictureFrame{
+		Encoding: id3v2.EncodingUTF8, MimeType: "image/jpeg",
+		PictureType: id3v2.PTBackCover, Description: "back", Picture: testJPEG(t),
+	})
+	if err := tagFile.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tagFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := New(musicDir, dataDir)
+	tracks, err := lib.Scan()
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("scan: %v, %d tracks", err, len(tracks))
+	}
+	updated, err := lib.UpdateTags(tracks[0], TagEdit{
+		Title: "With Cover", CoverData: testJPEG(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.HasArt {
+		t.Fatal("HasArt was not set after embedding a cover")
+	}
+	pictures := readPictures(t, path)
+	if len(pictures) != 2 {
+		t.Fatalf("pictures = %d, want front and back", len(pictures))
+	}
+	var front, back bool
+	for _, pic := range pictures {
+		switch pic.PictureType {
+		case id3v2.PTFrontCover:
+			front = true
+		case id3v2.PTBackCover:
+			back = true
+		}
+	}
+	if !front || !back {
+		t.Fatalf("front=%v back=%v, pictures=%+v", front, back, pictures)
+	}
+	if _, err := lib.Cover(updated); err != nil {
+		t.Fatalf("cover cache was not written: %v", err)
+	}
+
+	updated, err = lib.UpdateTags(updated, TagEdit{Title: "No Cover", RemoveCover: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HasArt {
+		t.Fatal("HasArt stayed true after removing the cover")
+	}
+	pictures = readPictures(t, path)
+	if len(pictures) != 1 || pictures[0].PictureType != id3v2.PTBackCover {
+		t.Fatalf("back cover was not preserved: %+v", pictures)
+	}
+}
+
+func TestUpdateFLACCover(t *testing.T) {
+	base := t.TempDir()
+	musicDir := filepath.Join(base, "music")
+	dataDir := filepath.Join(base, "data")
+	if err := os.MkdirAll(musicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(musicDir, "cover.flac")
+	makeAudio(t, path, "flac")
+
+	lib := New(musicDir, dataDir)
+	tracks, err := lib.Scan()
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("scan: %v, %d tracks", err, len(tracks))
+	}
+	updated, err := lib.UpdateTags(tracks[0], TagEdit{
+		Title: "Covered", Artist: "Aurora", CoverData: testJPEG(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.HasArt {
+		t.Fatal("HasArt was not set for FLAC")
+	}
+	meta := readFLACMeta(t, path)
+	if meta.Picture() == nil {
+		t.Fatal("FLAC picture was not embedded")
+	}
+	if meta.Title() != "Covered" || meta.Artist() != "Aurora" {
+		t.Fatalf("tags changed unexpectedly: title=%q artist=%q", meta.Title(), meta.Artist())
+	}
+
+	updated, err = lib.UpdateTags(updated, TagEdit{Title: "Covered", Artist: "Aurora", RemoveCover: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HasArt {
+		t.Fatal("HasArt stayed true after removing FLAC picture")
+	}
+	meta = readFLACMeta(t, path)
+	if meta.Picture() != nil {
+		t.Fatal("FLAC picture was not removed")
+	}
+}
+
+func TestUpdateTagsRejectsOversizedCover(t *testing.T) {
+	lib := New(t.TempDir(), t.TempDir())
+	_, err := lib.UpdateTags(model.Track{Path: "song.mp3"}, TagEdit{
+		CoverData: make([]byte, MaxCoverInput+1),
+	})
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("error = %v, want size error", err)
+	}
+}
+
+func readPictures(t *testing.T, path string) []id3v2.PictureFrame {
+	t.Helper()
+	tagFile, err := id3v2.Open(path, id3v2.Options{Parse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tagFile.Close()
+	var out []id3v2.PictureFrame
+	for _, frame := range tagFile.GetFrames("APIC") {
+		switch pic := frame.(type) {
+		case id3v2.PictureFrame:
+			out = append(out, pic)
+		case *id3v2.PictureFrame:
+			if pic != nil {
+				out = append(out, *pic)
+			}
+		}
+	}
+	return out
+}
+
+func readFLACMeta(t *testing.T, path string) tag.Metadata {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	meta, err := tag.ReadFrom(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return meta
+}

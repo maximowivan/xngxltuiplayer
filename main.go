@@ -34,7 +34,7 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.4.0"
+var version = "0.4.1"
 
 func main() {
 	defer recoverPanic()
@@ -186,6 +186,11 @@ func main() {
 	if libWatcher != nil {
 		model.SetLibraryWatch(libWatcher.Changes)
 	}
+	if runtime.GOOS == "windows" {
+		if exe, exeErr := os.Executable(); exeErr == nil && !strings.Contains(strings.ToLower(exe), "go-build") {
+			model.EnableUpdateCheck(version)
+		}
+	}
 	if mediaCtl, mediaErr := media.Start(); mediaErr != nil {
 		applog.Printf("media keys: %v", mediaErr)
 	} else {
@@ -201,6 +206,7 @@ func main() {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	program := tea.NewProgram(model, opts...)
+	model.SetProgram(program)
 	_, runErr := program.Run()
 
 	model.SaveSession()
@@ -377,11 +383,32 @@ func runUpdate(cfg config.Config) {
 	}
 
 	fmt.Printf("latest release: %s\n", rel.TagName)
-	fmt.Println("downloading and verifying SHA256...")
-	stage, err := updater.Stage(ctx, cfg.DataDir, rel)
+	lastPhase := ""
+	stage, err := updater.StageWithProgress(ctx, cfg.DataDir, rel, func(p updater.Progress) {
+		if p.Phase != lastPhase {
+			if lastPhase == "download" {
+				fmt.Println()
+			}
+			lastPhase = p.Phase
+		}
+		switch p.Phase {
+		case "download":
+			if p.Total > 0 {
+				fmt.Printf("\rdownloading: %3d%% (%d / %d MB)", int(p.Percent*100), p.Done>>20, p.Total>>20)
+			} else {
+				fmt.Printf("\rdownloading: %d MB", p.Done>>20)
+			}
+		case "verify":
+			fmt.Println("verifying SHA256...")
+		case "extract":
+			fmt.Println("extracting files...")
+		}
+	})
 	if err != nil {
+		fmt.Println()
 		fatal(fmt.Errorf("download update: %w", err))
 	}
+	fmt.Println()
 	fmt.Println("verified, installing...")
 	if err := updater.Apply(stage, cfg.BaseDir); err != nil {
 		fatal(fmt.Errorf("install update: %w", err))

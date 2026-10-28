@@ -26,7 +26,7 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 		modalNone, modalAddLink, modalNewPlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
-		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates,
+		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates, modalThemes, modalUpdate,
 	}
 	defer func() {
 		SetGlyphMode(GlyphsFull)

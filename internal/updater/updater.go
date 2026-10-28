@@ -37,6 +37,15 @@ type Release struct {
 	Assets  []Asset `json:"assets"`
 }
 
+// Progress reports a stage of the update download. Done/Total are meaningful
+// while Phase is "download"; other phases are indeterminate.
+type Progress struct {
+	Phase   string
+	Done    int64
+	Total   int64
+	Percent float64
+}
+
 // Latest fetches the latest published release.
 func Latest(ctx context.Context) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -105,6 +114,11 @@ func (r Release) WindowsAssets() (zip Asset, sha Asset, err error) {
 
 // Stage downloads, verifies and extracts a release into dataDir/tmp.
 func Stage(ctx context.Context, dataDir string, rel Release) (string, error) {
+	return StageWithProgress(ctx, dataDir, rel, nil)
+}
+
+// StageWithProgress is Stage with optional download progress callbacks.
+func StageWithProgress(ctx context.Context, dataDir string, rel Release, report func(Progress)) (string, error) {
 	zipAsset, shaAsset, err := rel.WindowsAssets()
 	if err != nil {
 		return "", err
@@ -115,26 +129,42 @@ func Stage(ctx context.Context, dataDir string, rel Release) (string, error) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", err
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(base)
+		}
+	}()
 
 	zipPath := filepath.Join(base, zipAsset.Name)
 	shaPath := zipPath + ".sha256"
-	if err := download(ctx, zipAsset.BrowserDownloadURL, zipPath); err != nil {
+	if err := downloadWithProgress(ctx, zipAsset.BrowserDownloadURL, zipPath, zipAsset.Size, report); err != nil {
 		return "", fmt.Errorf("download zip: %w", err)
 	}
 	if err := download(ctx, shaAsset.BrowserDownloadURL, shaPath); err != nil {
 		return "", fmt.Errorf("download sha256: %w", err)
+	}
+	if report != nil {
+		report(Progress{Phase: "verify"})
 	}
 	if err := verifySHA256(zipPath, shaPath); err != nil {
 		return "", err
 	}
 
 	filesDir := filepath.Join(base, "files")
+	if report != nil {
+		report(Progress{Phase: "extract"})
+	}
 	if err := extractZip(zipPath, filesDir); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
 	}
 	if _, err := os.Stat(filepath.Join(filesDir, "xngxltuiplayer.exe")); err != nil {
 		return "", fmt.Errorf("archive has no xngxltuiplayer.exe: %w", err)
 	}
+	if report != nil {
+		report(Progress{Phase: "ready", Percent: 1})
+	}
+	complete = true
 	return filesDir, nil
 }
 
@@ -164,6 +194,76 @@ func download(ctx context.Context, url, path string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func downloadWithProgress(ctx context.Context, url, path string, fallbackTotal int64, report func(Progress)) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "xngxltuiplayer-updater")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %s", resp.Status)
+	}
+	total := resp.ContentLength
+	if total <= 0 {
+		total = fallbackTotal
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	reader := io.Reader(resp.Body)
+	if report != nil {
+		reader = &progressReader{
+			r:      resp.Body,
+			total:  total,
+			report: report,
+		}
+	}
+	if _, err := io.Copy(out, reader); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+type progressReader struct {
+	r      io.Reader
+	total  int64
+	done   int64
+	last   time.Time
+	report func(Progress)
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.r.Read(buf)
+	p.done += int64(n)
+	if p.report != nil && (p.last.IsZero() || time.Since(p.last) >= 100*time.Millisecond || err == io.EOF) {
+		p.last = time.Now()
+		percent := 0.0
+		if p.total > 0 {
+			percent = float64(p.done) / float64(p.total)
+			if percent > 1 {
+				percent = 1
+			}
+		}
+		p.report(Progress{
+			Phase:   "download",
+			Done:    p.done,
+			Total:   p.total,
+			Percent: percent,
+		})
+	}
+	return n, err
 }
 
 func verifySHA256(zipPath, shaPath string) error {

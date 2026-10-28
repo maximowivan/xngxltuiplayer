@@ -40,6 +40,10 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderTagModal(w, contentH)
 	case modalDuplicates:
 		return m.renderDuplicatesModal(w, contentH)
+	case modalThemes:
+		return m.renderThemePicker(w, contentH)
+	case modalUpdate:
+		return m.renderUpdateModal(w, contentH)
 	}
 	return ""
 }
@@ -348,6 +352,10 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"u", "rescan library"},
 		{"c", "full-screen cover"},
 		{"t / T", "next / prev theme"},
+		{"ctrl+t", "theme list"},
+	}
+	if m.updateEnabled {
+		library = append(library, keyBinding{"U", "update player (when available)"})
 	}
 	if mouseHintAvailable() {
 		library = append(library, keyBinding{"mouse", "click" + currentGlyphs.Separator + iconShuffle + " " + iconRepeat + currentGlyphs.Separator + "volume"})

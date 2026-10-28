@@ -111,6 +111,7 @@ var (
 	artBgColor     = [3]float64{16, 16, 24}
 	artTopColor    = [3]float64{58, 46, 92}
 	artBottomColor = [3]float64{20, 17, 31}
+	artGlowSign    = 1.0
 	specLowColor   = [3]float64{166, 227, 161}
 	specMidColor   = [3]float64{249, 226, 175}
 	specHighColor  = [3]float64{243, 139, 168}
@@ -132,7 +133,7 @@ func placeholderImage(pixelW, pixelH int) image.Image {
 		for x := 0; x < pixelW; x++ {
 			dx := (float64(x) - float64(pixelW)/2) / math.Max(1, float64(pixelW))
 			dy := (float64(y) - float64(pixelH)/2) / math.Max(1, float64(pixelH))
-			glow := math.Max(0, 1-math.Sqrt(dx*dx+dy*dy)*2.4)
+			glow := math.Max(0, 1-math.Sqrt(dx*dx+dy*dy)*2.4) * artGlowSign
 			r := baseR + glow*34
 			g := baseG + glow*22
 			b := baseB + glow*46
@@ -168,7 +169,11 @@ func placeholderImage(pixelW, pixelH int) image.Image {
 				for sx := 0; sx < scale; sx++ {
 					px, py := offX+x*scale+sx, offY+y*scale+sy
 					if px >= 0 && px < pixelW && py >= 0 && py < pixelH {
-						img.SetRGBA(px, py, color.RGBA{232, 221, 245, 210})
+						noteColor := color.RGBA{232, 221, 245, 210}
+						if artGlowSign < 0 {
+							noteColor = color.RGBA{40, 38, 50, 210}
+						}
+						img.SetRGBA(px, py, noteColor)
 					}
 				}
 			}

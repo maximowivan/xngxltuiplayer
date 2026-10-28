@@ -299,7 +299,7 @@ func renderToast(message string, kind toastKind, width int) string {
 		icon, bg = currentGlyphs.Warning, colYellow
 	}
 	content := " " + icon + "  " + message
-	style := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#11111B")).Bold(true)
+	style := lipgloss.NewStyle().Background(bg).Foreground(readableOn(bg)).Bold(true)
 	return style.Render(fitLine(content, width))
 }
 

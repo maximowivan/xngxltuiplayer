@@ -26,6 +26,7 @@ import (
 	"tuiplay/internal/presence"
 	"tuiplay/internal/session"
 	"tuiplay/internal/stats"
+	"tuiplay/internal/updater"
 )
 
 var startupHint string
@@ -67,6 +68,8 @@ const (
 	modalExportM3U
 	modalEditTags
 	modalDuplicates
+	modalThemes
+	modalUpdate
 )
 
 type toastKind int
@@ -111,11 +114,26 @@ type Model struct {
 	lastMediaState  media.State
 	lastMediaUpdate time.Time
 
+	program *tea.Program
+
+	updateEnabled   bool
+	updateVersion   string
+	updateAvailable bool
+	updateRelease   updater.Release
+	updatePhase     string
+	updateDone      int64
+	updateTotal     int64
+	updatePercent   float64
+	updateErr       string
+	updateStaging   bool
+
 	width  int
 	height int
 
-	theme     string
-	coverMode bool
+	theme       string
+	themeBefore string
+	themeCursor int
+	coverMode   bool
 
 	volDragging bool
 
@@ -298,6 +316,7 @@ func (m *Model) Init() tea.Cmd {
 		m.loadLibraryCmd(false),
 		m.waitLibraryChange(),
 		m.waitMediaCommand(),
+		m.checkUpdateCmd(),
 		m.waitPresenceStatus(),
 		tickCmd(),
 	)
