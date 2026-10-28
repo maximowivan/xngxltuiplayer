@@ -91,7 +91,7 @@ func Start() (Controller, error) {
 		return nil, fmt.Errorf("export MPRIS properties: %w", err)
 	}
 	c.props = props
-	if err := conn.Export(c, mprisPath, mprisPlayerIface); err != nil {
+	if err := conn.ExportWithMap(c, map[string]string{"SeekOffset": "Seek"}, mprisPath, mprisPlayerIface); err != nil {
 		_, _ = conn.ReleaseName(mprisBusName)
 		_ = conn.Close()
 		return nil, fmt.Errorf("export MPRIS player: %w", err)
@@ -216,7 +216,7 @@ func (c *linuxController) Stop() *dbus.Error {
 	return nil
 }
 
-func (c *linuxController) Seek(offset int64) *dbus.Error {
+func (c *linuxController) SeekOffset(offset int64) *dbus.Error {
 	c.send(Command{Kind: Seek, Offset: time.Duration(offset) * time.Microsecond})
 	return nil
 }
