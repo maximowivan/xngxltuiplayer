@@ -61,6 +61,8 @@ func New(musicDir, dataDir string) *Library {
 	return &Library{MusicDir: musicDir, DataDir: dataDir}
 }
 
+const cacheVersion = 3
+
 type cacheFile struct {
 	Version int           `json:"version"`
 	Tracks  []model.Track `json:"tracks"`
@@ -163,7 +165,7 @@ func (l *Library) loadCache() cacheFile {
 	if err := atomicfile.ReadJSON(filepath.Join(l.DataDir, "library.json"), &cache); err != nil {
 		return cacheFile{}
 	}
-	if cache.Version != 3 {
+	if cache.Version != cacheVersion {
 		return cacheFile{}
 	}
 	return cache
@@ -173,7 +175,7 @@ func (l *Library) saveCache(tracks []model.Track) error {
 	if err := os.MkdirAll(l.DataDir, 0o755); err != nil {
 		return err
 	}
-	return atomicfile.WriteJSON(filepath.Join(l.DataDir, "library.json"), cacheFile{Version: 3, Tracks: tracks})
+	return atomicfile.WriteJSON(filepath.Join(l.DataDir, "library.json"), cacheFile{Version: cacheVersion, Tracks: tracks})
 }
 
 func readTrackMetadata(path string, info os.FileInfo) model.Track {

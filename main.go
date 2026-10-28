@@ -34,24 +34,25 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.4.1"
+var version = "0.4.2"
 
 func main() {
 	defer recoverPanic()
 
 	var (
-		musicDir  = flag.String("music", "", "music library folder (default: ./music next to the executable)")
-		dataDir   = flag.String("data", "", "data folder for playlists, cache and session (default: ./data)")
-		themeName = flag.String("theme", "", "color theme: catppuccin, tokyonight, gruvbox, nord, dracula, rosepine, ember")
-		ascii     = flag.Bool("ascii", false, "use the plain ASCII UI (compatibility mode)")
-		uiMode    = flag.String("ui", "auto", "UI mode: auto, full, compat or ascii")
-		colorMode = flag.String("color", "auto", "color mode: auto, truecolor, 256, 16 or none")
-		watchMode = flag.String("watch", "auto", "watch the music folder: auto, on or off")
-		icons     = flag.String("icons", "auto", "icon mode: auto, unicode or ascii")
-		discordID = flag.String("discord", "", "Discord application client id for Rich Presence")
-		check     = flag.Bool("check", false, "check directories, external tools and audio output, then exit")
-		update    = flag.Bool("update", false, "download and install the latest release, then restart")
-		showVer   = flag.Bool("version", false, "print the version and exit")
+		musicDir   = flag.String("music", "", "music library folder (default: ./music next to the executable)")
+		dataDir    = flag.String("data", "", "data folder for playlists, cache and session (default: ./data)")
+		themeName  = flag.String("theme", "", "color theme: catppuccin, tokyonight, gruvbox, nord, dracula, rosepine, ember")
+		ascii      = flag.Bool("ascii", false, "use the plain ASCII UI (compatibility mode)")
+		uiMode     = flag.String("ui", "auto", "UI mode: auto, full, compat or ascii")
+		colorMode  = flag.String("color", "auto", "color mode: auto, truecolor, 256, 16 or none")
+		watchMode  = flag.String("watch", "auto", "watch the music folder: auto, on or off")
+		sampleRate = flag.String("rate", "48000", "audio output rate: 48000 or 44100")
+		icons      = flag.String("icons", "auto", "icon mode: auto, unicode or ascii")
+		discordID  = flag.String("discord", "", "Discord application client id for Rich Presence")
+		check      = flag.Bool("check", false, "check directories, external tools and audio output, then exit")
+		update     = flag.Bool("update", false, "download and install the latest release, then restart")
+		showVer    = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
 
@@ -72,6 +73,10 @@ func main() {
 		fatal(err)
 	}
 	watchValue, err := parseWatchMode(*watchMode)
+	if err != nil {
+		fatal(err)
+	}
+	rateValue, err := parseSampleRate(*sampleRate)
 	if err != nil {
 		fatal(err)
 	}
@@ -106,7 +111,7 @@ func main() {
 	}
 
 	if *check {
-		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII, watchValue)
+		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII, watchValue, rateValue)
 		applog.Close()
 		if !ok {
 			os.Exit(1)
@@ -156,7 +161,7 @@ func main() {
 		}
 	}
 	trackStats := stats.Load(cfg.DataDir)
-	engine := audio.New(float64(state.Volume) / 100)
+	engine := audio.NewWithRate(float64(state.Volume)/100, rateValue)
 	mgr := download.NewManager(download.Options{
 		MusicDir:    cfg.MusicDir,
 		DataDir:     cfg.DataDir,
@@ -270,6 +275,17 @@ func parseWatchMode(value string) (string, error) {
 		return strings.ToLower(strings.TrimSpace(value)), nil
 	default:
 		return "", fmt.Errorf("invalid -watch value %q: expected auto, on or off", value)
+	}
+}
+
+func parseSampleRate(value string) (int, error) {
+	switch strings.TrimSpace(value) {
+	case "", "48000":
+		return 48000, nil
+	case "44100":
+		return 44100, nil
+	default:
+		return 0, fmt.Errorf("invalid -rate value %q: expected 48000 or 44100", value)
 	}
 }
 
@@ -418,7 +434,7 @@ func runUpdate(cfg config.Config) {
 	applog.Close()
 }
 
-func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool, watchMode string) bool {
+func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool, watchMode string, sampleRate int) bool {
 	ok := true
 	fmt.Printf("%s %s\n\n", appName, version)
 
@@ -508,11 +524,11 @@ func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Conf
 	}
 
 	fmt.Println("\nAudio output")
-	if err := audio.Check(); err != nil {
+	if err := audio.CheckRate(sampleRate); err != nil {
 		fmt.Printf("  error: %v\n", err)
 		ok = false
 	} else {
-		fmt.Println("  ok — 48 kHz stereo output available")
+		fmt.Printf("  ok - %d Hz stereo output available\n", sampleRate)
 	}
 
 	fmt.Println("\nSession")

@@ -74,10 +74,26 @@ func executableDir() string {
 }
 
 func isTemporaryBuild(dir string) bool {
-	// `go run` builds the binary under a temporary go-build directory. Do not
-	// treat every executable inside %TEMP% as a go-run build: portable copies
-	// may legitimately live there and must keep their own music/data folders.
-	return strings.Contains(strings.ToLower(dir), "go-build")
+	// `go run` builds the binary under .../go-buildXXXX/b001/exe/main.exe.
+	// Require the bNNN/exe tail so a portable folder that happens to be named
+	// "go-build" keeps its own music/data next to the executable.
+	lower := strings.ToLower(dir)
+	if !strings.Contains(lower, "go-build") {
+		return false
+	}
+	if strings.ToLower(filepath.Base(dir)) != "exe" {
+		return false
+	}
+	build := strings.ToLower(filepath.Base(filepath.Dir(dir)))
+	if len(build) < 2 || build[0] != 'b' {
+		return false
+	}
+	for _, r := range build[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Writable reports whether a file can be created inside dir.

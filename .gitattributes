@@ -7,6 +7,8 @@
 *.ps1 text eol=crlf
 
 *.exe binary
+*.ico binary
+*.syso binary
 *.png binary
 *.jpg binary
 *.zip binary

@@ -38,6 +38,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "go build failed" }
 
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, discord.example.json, install_xngxltuiplayer.ps1, install_xngxltuiplayer.bat, uninstall_xngxltuiplayer.ps1, uninstall_xngxltuiplayer.bat -Destination $stage
+          New-Item -ItemType Directory -Path "$stage/assets" -Force | Out-Null
+          Copy-Item assets/logo.png, assets/logo-256.png -Destination "$stage/assets"
           & "$stage/xngxltuiplayer.exe" --version
 
           $name = "xngxltuiplayer-v$version-windows-amd64.zip"
@@ -103,9 +105,11 @@ jobs:
           mkdir -p "$stage"
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/xngxltuiplayer" .
           cp README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json "$stage/"
+          mkdir -p "$stage/assets"
+          cp assets/logo.png "$stage/assets/"
           archive="$PWD/dist/xngxltuiplayer-v$version-linux-amd64.tar.gz"
           tar -C "$stage" -czf "$archive" \
-            xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json
+            xngxltuiplayer README.md LICENSE THIRD_PARTY_NOTICES.md discord.example.json assets/logo.png
           cd dist
           sha256sum "xngxltuiplayer-v$version-linux-amd64.tar.gz" > "xngxltuiplayer-v$version-linux-amd64.tar.gz.sha256"
           ls -lh

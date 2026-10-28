@@ -47,6 +47,12 @@ try {
             Copy-Item -LiteralPath $src -Destination (Join-Path $InstallDir $name) -Force
         }
     }
+    $logo = Join-Path $Stage "assets\logo.png"
+    if (Test-Path -LiteralPath $logo) {
+        $assetsDir = Join-Path $InstallDir "assets"
+        New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+        Copy-Item -LiteralPath $logo -Destination (Join-Path $assetsDir "logo.png") -Force
+    }
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     Write-Log "updated $InstallDir"
     if (-not $NoRestart) {

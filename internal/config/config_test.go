@@ -41,4 +41,10 @@ func TestTemporaryBuildDetection(t *testing.T) {
 	if !isTemporaryBuild(buildDir) {
 		t.Fatal("go-build directory was not detected")
 	}
+	if isTemporaryBuild(filepath.Join(os.TempDir(), "go-build")) {
+		t.Fatal("a folder named go-build must not be treated as go run")
+	}
+	if isTemporaryBuild(filepath.Join(os.TempDir(), "go-build", "b001", "app")) {
+		t.Fatal("a non-exe go-build folder must not be treated as go run")
+	}
 }

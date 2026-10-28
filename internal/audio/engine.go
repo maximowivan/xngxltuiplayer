@@ -20,12 +20,28 @@ import (
 	"github.com/gopxl/beep/v2/wav"
 )
 
-// SampleRate is the fixed output rate used by the speaker.
+// SampleRate is the default output rate used by the speaker.
 const SampleRate = beep.SampleRate(48000)
 
-// bufferSamples is roughly 100 ms of audio. It keeps playback stable while
-// staying responsive enough for seeking.
-const bufferSamples = 4800
+// FallbackSampleRate is available for older USB DACs and Bluetooth headsets
+// that only accept 44.1 kHz. Oto does not allow creating a second context in
+// the same process, so this is an explicit startup choice, not an automatic
+// fallback.
+const FallbackSampleRate = beep.SampleRate(44100)
+
+// initSpeaker is a variable so tests can simulate the audio device.
+var initSpeaker = speaker.Init
+
+func bufferSizeFor(rate beep.SampleRate) int {
+	return int(rate.N(100 * time.Millisecond))
+}
+
+func normalizeSampleRate(rate int) beep.SampleRate {
+	if beep.SampleRate(rate) == FallbackSampleRate {
+		return FallbackSampleRate
+	}
+	return SampleRate
+}
 
 // EventKind describes an asynchronous player event.
 type EventKind int
@@ -72,10 +88,11 @@ func (t *trackStream) close() {
 
 // Engine owns the speaker and the currently mixed tracks.
 type Engine struct {
-	mu       sync.Mutex
-	initErr  error
-	initOnce bool
-	volume   float64
+	mu          sync.Mutex
+	initialized bool
+	initErr     error
+	sampleRate  beep.SampleRate
+	volume      float64
 
 	tracks   []*trackStream
 	active   *trackStream
@@ -90,9 +107,16 @@ type Engine struct {
 // New creates a player with the given volume (0..1). The audio device is
 // opened lazily on the first Play call so the UI can start without a device.
 func New(volume float64) *Engine {
+	return NewWithRate(volume, int(SampleRate))
+}
+
+// NewWithRate creates an engine with an explicit output rate. Only 44100 and
+// 48000 are supported; other values use the 48000 default.
+func NewWithRate(volume float64, rate int) *Engine {
 	return &Engine{
-		volume: clamp01(volume),
-		events: make(chan Event, 32),
+		volume:     clamp01(volume),
+		sampleRate: normalizeSampleRate(rate),
+		events:     make(chan Event, 32),
 	}
 }
 
@@ -100,12 +124,21 @@ func New(volume float64) *Engine {
 func (e *Engine) Events() <-chan Event { return e.events }
 
 func (e *Engine) ensureInitLocked() error {
-	if e.initOnce {
+	if e.initialized {
+		return nil
+	}
+	if e.initErr != nil {
 		return e.initErr
 	}
-	e.initOnce = true
-	e.initErr = speaker.Init(SampleRate, bufferSamples)
-	return e.initErr
+	// Oto supports only one context per process, so a failed initialization
+	// cannot be retried in-process. Keep the original error and tell the user
+	// what actually helps.
+	if err := initSpeaker(e.sampleRate, bufferSizeFor(e.sampleRate)); err != nil {
+		e.initErr = fmt.Errorf("%w (restart the player after fixing the audio device)", err)
+		return e.initErr
+	}
+	e.initialized = true
+	return nil
 }
 
 // Play starts a track at start, replacing anything currently playing.
@@ -181,7 +214,7 @@ func (e *Engine) CrossfadeTo(path string, duration, start, fade time.Duration) e
 	if err != nil {
 		return err
 	}
-	fadeSamples := int64(SampleRate.N(fade))
+	fadeSamples := int64(e.sampleRate.N(fade))
 	if fadeSamples < 1 {
 		ts.close()
 		return errors.New("crossfade is too short")
@@ -248,8 +281,8 @@ func (e *Engine) newTrackLocked(path string, duration, start time.Duration, init
 	}
 
 	var streamer beep.Streamer = base
-	if format.SampleRate != SampleRate {
-		streamer = beep.Resample(4, format.SampleRate, SampleRate, base)
+	if format.SampleRate != e.sampleRate {
+		streamer = beep.Resample(4, format.SampleRate, e.sampleRate, base)
 	}
 
 	counter := &countingStreamer{Streamer: streamer}
@@ -398,7 +431,7 @@ func (e *Engine) positionLocked() time.Duration {
 	if e.active == nil {
 		return e.offset
 	}
-	pos := e.offset + SampleRate.D(int(e.active.counter.n.Load()))
+	pos := e.offset + e.sampleRate.D(int(e.active.counter.n.Load()))
 	if e.duration > 0 && pos > e.duration {
 		pos = e.duration
 	}
@@ -468,6 +501,7 @@ func (e *Engine) Err() error {
 func (e *Engine) Spectrum(bars int) []float64 {
 	e.mu.Lock()
 	tap := (*spectrumTap)(nil)
+	rate := e.sampleRate
 	if e.active != nil {
 		tap = e.active.tap
 	}
@@ -476,7 +510,7 @@ func (e *Engine) Spectrum(bars int) []float64 {
 		return make([]float64, maxInt(bars, 0))
 	}
 	samples := tap.Snapshot(fftSize)
-	return spectrumFromSamples(samples, bars)
+	return spectrumFromSamplesAt(samples, bars, float64(rate))
 }
 
 func clamp01(v float64) float64 {
@@ -661,7 +695,14 @@ func (t *spectrumTap) Snapshot(n int) []float64 {
 // Check opens and closes the audio device. It is used by --check and must only
 // be called in a process that does not create an Engine.
 func Check() error {
-	if err := speaker.Init(SampleRate, bufferSamples); err != nil {
+	return CheckRate(int(SampleRate))
+}
+
+// CheckRate opens the audio device at an explicit rate. It is used by --check
+// and must only be called in a process that does not create an Engine.
+func CheckRate(rate int) error {
+	r := normalizeSampleRate(rate)
+	if err := speaker.Init(r, bufferSizeFor(r)); err != nil {
 		return err
 	}
 	speaker.Close()

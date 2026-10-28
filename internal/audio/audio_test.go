@@ -3,12 +3,66 @@ package audio
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gopxl/beep/v2"
 )
+
+func TestEnsureInitUsesConfiguredRateAndCachesSuccess(t *testing.T) {
+	engine := NewWithRate(0.5, int(FallbackSampleRate))
+	original := initSpeaker
+	defer func() { initSpeaker = original }()
+
+	attempts := 0
+	initSpeaker = func(rate beep.SampleRate, _ int) error {
+		attempts++
+		if rate != FallbackSampleRate {
+			t.Fatalf("device opened at %v, want %v", rate, FallbackSampleRate)
+		}
+		return nil
+	}
+
+	engine.mu.Lock()
+	if err := engine.ensureInitLocked(); err != nil {
+		engine.mu.Unlock()
+		t.Fatal(err)
+	}
+	engine.mu.Unlock()
+	if !engine.initialized || engine.sampleRate != FallbackSampleRate {
+		t.Fatalf("initialized=%v rate=%v", engine.initialized, engine.sampleRate)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+
+	engine.mu.Lock()
+	_ = engine.ensureInitLocked()
+	engine.mu.Unlock()
+	if attempts != 1 {
+		t.Fatalf("successful initialization was repeated: %d attempts", attempts)
+	}
+}
+
+func TestFailedAudioInitIsNotCachedAsSuccess(t *testing.T) {
+	engine := New(0.5)
+	original := initSpeaker
+	defer func() { initSpeaker = original }()
+	initSpeaker = func(rate beep.SampleRate, _ int) error {
+		return errors.New("device busy")
+	}
+
+	engine.mu.Lock()
+	err := engine.ensureInitLocked()
+	engine.mu.Unlock()
+	if err == nil || engine.initialized {
+		t.Fatalf("err=%v initialized=%v", err, engine.initialized)
+	}
+}
 
 func TestDecodeWAV(t *testing.T) {
 	dir := t.TempDir()

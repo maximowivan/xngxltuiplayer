@@ -118,6 +118,16 @@ if (Test-Path -LiteralPath $terminalDir) {
     }
 }
 
+$assetsDir = Join-Path $InstallDir "assets"
+if (Test-Path -LiteralPath $assetsDir) {
+    try {
+        Remove-Item -LiteralPath $assetsDir -Recurse -Force
+        Write-Info "Удалены файлы логотипа"
+    } catch {
+        Write-Warn "Не удалось удалить assets\`: $($_.Exception.Message)"
+    }
+}
+
 if ($deleteData) {
     Write-Step "Данные"
     foreach ($name in @("music", "data")) {

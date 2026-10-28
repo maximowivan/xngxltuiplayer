@@ -82,6 +82,21 @@ func TestParseWatchMode(t *testing.T) {
 	}
 }
 
+func TestParseSampleRate(t *testing.T) {
+	for value, want := range map[string]int{"": 48000, "48000": 48000, "44100": 44100, " 44100 ": 44100} {
+		got, err := parseSampleRate(value)
+		if err != nil {
+			t.Fatalf("parseSampleRate(%q): %v", value, err)
+		}
+		if got != want {
+			t.Fatalf("parseSampleRate(%q) = %d, want %d", value, got, want)
+		}
+	}
+	if _, err := parseSampleRate("96000"); err == nil {
+		t.Fatal("expected an error for an unknown sample rate")
+	}
+}
+
 func TestResolveGlyphAndIconModes(t *testing.T) {
 	info := terminal.Info{Glyphs: terminal.GlyphsCompat, Unicode: false}
 	if got := resolveGlyphMode("auto", info); got != ui.GlyphsCompat {

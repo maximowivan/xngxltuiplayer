@@ -541,6 +541,12 @@ try {
                 Copy-Item -LiteralPath $from -Destination (Join-Path $InstallDir $name) -Force
             }
         }
+        $logoFrom = Join-Path $source "assets\logo.png"
+        if (Test-Path -LiteralPath $logoFrom) {
+            $assetsDir = Join-Path $InstallDir "assets"
+            New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+            Copy-Item -LiteralPath $logoFrom -Destination (Join-Path $assetsDir "logo.png") -Force
+        }
         foreach ($name in @("uninstall_xngxltuiplayer.ps1", "uninstall_xngxltuiplayer.bat")) {
             $target = Join-Path $InstallDir $name
             $fallback = Join-Path $PSScriptRoot $name

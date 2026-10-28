@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -177,7 +178,16 @@ func (m *Manager) Enqueue(raw string) (Job, error) {
 	}
 	needsYtDlp := link.Kind != KindDirect
 	if missing := m.tools.Missing(needsYtDlp); len(missing) > 0 {
-		return Job{}, fmt.Errorf("%s is required — %s", missing[0], InstallHint(missing[0]))
+		hints := make([]string, len(missing))
+		for i, name := range missing {
+			hints[i] = InstallHint(name)
+		}
+		verb := "is required"
+		if len(missing) > 1 {
+			verb = "are required"
+		}
+		return Job{}, fmt.Errorf("%s %s — %s",
+			strings.Join(missing, ", "), verb, strings.Join(hints, "; "))
 	}
 
 	select {
@@ -315,7 +325,9 @@ func (m *Manager) run(id int) {
 	m.activeCancel = cancel
 	m.mu.Unlock()
 
-	path, warning, err := m.process(ctx, id, link)
+	path, warning, err := safeProcess(func() (string, string, error) {
+		return m.process(ctx, id, link)
+	})
 	ctxErr := ctx.Err()
 
 	cancel()
@@ -348,6 +360,18 @@ func (m *Manager) run(id int) {
 		}
 	}
 	m.mu.Unlock()
+}
+
+// safeProcess turns an unexpected panic in a download pipeline into a normal
+// failed job. Without this, one malformed response could kill the single
+// worker goroutine and leave every later job queued forever.
+func safeProcess(fn func() (string, string, error)) (path, warning string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("internal download error: %v", recovered)
+		}
+	}()
+	return fn()
 }
 
 func (m *Manager) process(ctx context.Context, id int, link Link) (string, string, error) {

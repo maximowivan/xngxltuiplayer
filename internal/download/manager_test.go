@@ -8,11 +8,42 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dhowden/tag"
 )
+
+func TestSafeProcessRecovers(t *testing.T) {
+	path, warning, err := safeProcess(func() (string, string, error) {
+		panic("bad parser state")
+	})
+	if err == nil || !strings.Contains(err.Error(), "internal download error") {
+		t.Fatalf("err = %v, want internal download error", err)
+	}
+	if path != "" || warning != "" {
+		t.Fatalf("path=%q warning=%q on panic", path, warning)
+	}
+}
+
+func TestEnqueueReportsAllMissingTools(t *testing.T) {
+	base := t.TempDir()
+	mgr := NewManager(Options{
+		MusicDir: filepath.Join(base, "music"),
+		DataDir:  filepath.Join(base, "data"),
+		Tools:    Tools{},
+	})
+	defer mgr.Close()
+
+	_, err := mgr.Enqueue("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+	if err == nil {
+		t.Fatal("expected missing tools error")
+	}
+	if !strings.Contains(err.Error(), "yt-dlp") || !strings.Contains(err.Error(), "ffmpeg") {
+		t.Fatalf("error does not mention both tools: %v", err)
+	}
+}
 
 func TestDirectDownloadPipeline(t *testing.T) {
 	tools := FindTools()

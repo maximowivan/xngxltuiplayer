@@ -46,11 +46,20 @@ func fft(re, im []float64) {
 	}
 }
 
-// spectrumFromSamples computes logarithmically spaced magnitude bars from
-// 48 kHz mono samples. The result is normalized to 0..1.
+// spectrumFromSamples computes bars using the preferred 48 kHz rate. It is
+// kept for tests and callers that do not have an engine-specific rate.
 func spectrumFromSamples(samples []float64, bars int) []float64 {
+	return spectrumFromSamplesAt(samples, bars, float64(SampleRate))
+}
+
+// spectrumFromSamplesAt computes logarithmically spaced magnitude bars from
+// mono samples at the given rate. The result is normalized to 0..1.
+func spectrumFromSamplesAt(samples []float64, bars int, sampleRate float64) []float64 {
 	if bars <= 0 {
 		return nil
+	}
+	if sampleRate <= 0 {
+		sampleRate = float64(SampleRate)
 	}
 	out := make([]float64, bars)
 	n := fftSize
@@ -76,8 +85,8 @@ func spectrumFromSamples(samples []float64, bars int) []float64 {
 	for i := 0; i < bars; i++ {
 		f0 := fMin * math.Pow(ratio, float64(i)/float64(bars))
 		f1 := fMin * math.Pow(ratio, float64(i+1)/float64(bars))
-		b0 := int(f0 * float64(n) / float64(SampleRate))
-		b1 := int(f1 * float64(n) / float64(SampleRate))
+		b0 := int(f0 * float64(n) / sampleRate)
+		b1 := int(f1 * float64(n) / sampleRate)
 		if b0 < 1 {
 			b0 = 1
 		}
