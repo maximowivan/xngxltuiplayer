@@ -23,7 +23,7 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 	sizes := [][2]int{{130, 40}, {110, 32}, {92, 28}, {84, 24}, {60, 18}}
 	modes := []GlyphMode{GlyphsFull, GlyphsCompat, GlyphsASCII}
 	modals := []modalKind{
-		modalNone, modalAddLink, modalPreview, modalNewPlaylist, modalAddToPlaylist,
+		modalNone, modalAddLink, modalPreview, modalEQ, modalNewPlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
 		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates, modalThemes, modalUpdate,

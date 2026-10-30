@@ -66,6 +66,8 @@ type Event struct {
 type trackStream struct {
 	base     beep.StreamSeekCloser
 	counter  *countingStreamer
+	speed    *beep.Resampler
+	eq       *equalizer
 	tap      *spectrumTap
 	fade     *fadeStreamer
 	ctrl     *beep.Ctrl
@@ -93,6 +95,8 @@ type Engine struct {
 	initErr     error
 	sampleRate  beep.SampleRate
 	volume      float64
+	speed       float64
+	eq          EQSettings
 
 	tracks   []*trackStream
 	active   *trackStream
@@ -115,6 +119,8 @@ func New(volume float64) *Engine {
 func NewWithRate(volume float64, rate int) *Engine {
 	return &Engine{
 		volume:     clamp01(volume),
+		speed:      1,
+		eq:         FlatEQ(),
 		sampleRate: normalizeSampleRate(rate),
 		events:     make(chan Event, 32),
 	}
@@ -203,8 +209,11 @@ func (e *Engine) CrossfadeTo(path string, duration, start, fade time.Duration) e
 	if remaining <= 0 {
 		return errors.New("track already ended")
 	}
-	if fade > remaining {
-		fade = remaining
+	// fade is wall-clock time; the position is track time. Convert before
+	// clamping so a 2x track still gets a full five-second crossfade.
+	remainingWall := wallRemaining(remaining, e.speed)
+	if fade > remainingWall {
+		fade = remainingWall
 	}
 	if fade < 100*time.Millisecond {
 		return errors.New("too close to track end")
@@ -286,7 +295,9 @@ func (e *Engine) newTrackLocked(path string, duration, start time.Duration, init
 	}
 
 	counter := &countingStreamer{Streamer: streamer}
-	tap := newSpectrumTap(counter, 4096)
+	speed := beep.ResampleRatio(4, e.speed, counter)
+	eq := newEqualizer(speed, e.eq, float64(e.sampleRate))
+	tap := newSpectrumTap(eq, 4096)
 	fade := &fadeStreamer{Streamer: tap, gain: initialGain}
 	vol := &effects.Volume{
 		Streamer: fade,
@@ -299,6 +310,8 @@ func (e *Engine) newTrackLocked(path string, duration, start time.Duration, init
 	return &trackStream{
 		base:     base,
 		counter:  counter,
+		speed:    speed,
+		eq:       eq,
 		tap:      tap,
 		fade:     fade,
 		ctrl:     ctrl,
@@ -427,6 +440,18 @@ func (e *Engine) Position() time.Duration {
 	return e.positionLocked()
 }
 
+// wallRemaining converts track-time remaining into wall-clock time. Speed is a
+// playback rate; 2x consumes twice as much track time per real second.
+func wallRemaining(remaining time.Duration, speed float64) time.Duration {
+	if remaining <= 0 {
+		return 0
+	}
+	if speed <= 0 {
+		speed = 1
+	}
+	return time.Duration(float64(remaining) / speed)
+}
+
 func (e *Engine) positionLocked() time.Duration {
 	if e.active == nil {
 		return e.offset
@@ -481,6 +506,53 @@ func (e *Engine) Volume() float64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.volume
+}
+
+// SetSpeed changes the tape-style playback rate. It applies to the current
+// track and to every track started afterwards.
+func (e *Engine) SetSpeed(speed float64) {
+	speed = NormalizeSpeed(speed)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.speed = speed
+	if !e.initialized {
+		return
+	}
+	speaker.Lock()
+	for _, ts := range e.tracks {
+		ts.speed.SetRatio(speed)
+	}
+	speaker.Unlock()
+}
+
+// Speed returns the current playback rate.
+func (e *Engine) Speed() float64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.speed
+}
+
+// SetEQ changes the equalizer. It is applied live to every active stream.
+func (e *Engine) SetEQ(settings EQSettings) {
+	settings = settings.Normalize()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.eq = settings
+	if !e.initialized {
+		return
+	}
+	speaker.Lock()
+	for _, ts := range e.tracks {
+		ts.eq.set(settings, float64(e.sampleRate))
+	}
+	speaker.Unlock()
+}
+
+// EQ returns the current equalizer settings.
+func (e *Engine) EQ() EQSettings {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.eq
 }
 
 // Err returns any streaming error from the current track.

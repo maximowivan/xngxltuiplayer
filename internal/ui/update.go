@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"tuiplay/internal/audio"
 	"tuiplay/internal/download"
 )
 
@@ -195,6 +196,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "=", "+":
 		m.setVolume(m.volume + 5)
+		return m, nil
+	case "[":
+		m.changeSpeed(-audio.SpeedStep)
+		return m, nil
+	case "]":
+		m.changeSpeed(audio.SpeedStep)
+		return m, nil
+	case "\\":
+		m.resetSpeed()
+		return m, nil
+	case "Q":
+		m.openEQ()
 		return m, nil
 	case "ctrl+a":
 		m.focus = focusTracks
@@ -390,6 +403,37 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.nameInput, cmd = m.nameInput.Update(msg)
 		}
 		return m, cmd
+
+	case modalEQ:
+		switch key {
+		case "esc", "q":
+			m.closeModal()
+			return m, nil
+		case "left", "h":
+			m.eqCursor--
+			if m.eqCursor < 0 {
+				m.eqCursor = audio.EQBandCount - 1
+			}
+		case "right", "l":
+			m.eqCursor = (m.eqCursor + 1) % audio.EQBandCount
+		case "up", "k":
+			m.adjustEQBand(1)
+		case "down", "j":
+			m.adjustEQBand(-1)
+		case "0":
+			m.resetEQBand()
+		case "1", "2", "3", "4":
+			if m.setEQPreset(int(key[0] - '1')) {
+				m.setToast("EQ preset: "+audio.MatchPreset(m.eq), toastInfo, 1500*time.Millisecond)
+			}
+		case "tab":
+			m.cycleEQPreset()
+		case "-", "_":
+			m.adjustEQPreamp(-1)
+		case "=", "+":
+			m.adjustEQPreamp(1)
+		}
+		return m, nil
 
 	case modalPreview:
 		switch key {

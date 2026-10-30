@@ -136,6 +136,7 @@ func TestViewFrames(t *testing.T) {
 	for _, modal := range []modalKind{
 		modalAddLink,
 		modalPreview,
+		modalEQ,
 		modalNewPlaylist,
 		modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist,

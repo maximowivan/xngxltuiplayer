@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"tuiplay/internal/audio"
 	"tuiplay/internal/model"
 )
 
@@ -668,7 +669,11 @@ func (m *Model) playerNowText() string {
 		iconStyle = accent2Style
 		text = titleStyle.Render(cleanText(m.current.DisplayTitle()))
 	}
-	return iconStyle.Render(icon) + " " + text
+	speed := ""
+	if m.speed != 1 {
+		speed = accent2Style.Render(audio.SpeedLabel(m.speed)) + " "
+	}
+	return iconStyle.Render(icon) + " " + speed + text
 }
 
 func (m *Model) playerArtistLine(innerW int) string {
@@ -1070,6 +1075,15 @@ func (m *Model) renderModalHints(w int) string {
 		return hintLine(
 			keyHint("enter", "queue all"),
 			keyHint("esc", "cancel"),
+		)
+	case modalEQ:
+		return hintLine(
+			keyHint(currentGlyphs.LeftRight, "band"),
+			keyHint(currentGlyphs.UpDown, "gain"),
+			keyHint("0", "reset"),
+			keyHint("1-4", "presets"),
+			keyHint("-/+", "preamp"),
+			keyHint("esc", "close"),
 		)
 	case modalImportM3U, modalExportM3U:
 		return hintLine(

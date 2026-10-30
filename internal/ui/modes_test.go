@@ -88,7 +88,7 @@ func TestASCIIModeUsesPrintableASCII(t *testing.T) {
 	m.downloadsCur = 0
 
 	for _, modal := range []modalKind{
-		modalNone, modalAddLink, modalNewPlaylist, modalAddToPlaylist,
+		modalNone, modalAddLink, modalEQ, modalNewPlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
 		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates, modalThemes, modalUpdate,

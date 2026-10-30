@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 
+	"tuiplay/internal/audio"
 	"tuiplay/internal/download"
 	"tuiplay/internal/model"
 )
@@ -22,6 +24,8 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderAddLinkModal(w, contentH)
 	case modalPreview:
 		return m.renderPreviewModal(w, contentH)
+	case modalEQ:
+		return m.renderEQModal(w, contentH)
 	case modalNewPlaylist:
 		return m.renderNewPlaylistModal(w, contentH)
 	case modalAddToPlaylist:
@@ -153,6 +157,131 @@ func (m *Model) renderPreviewModal(w, contentH int) string {
 		rows = maxRows
 	}
 	return renderBox("Playlist preview", build(rows), width, height, colAccent, colAccent)
+}
+
+func (m *Model) renderEQModal(w, contentH int) string {
+	width := minInt(82, maxInt(48, w-8))
+	innerW := width - 4
+	compact := contentH < 22 || innerW < 62
+
+	var lines []string
+	if !compact {
+		lines = append(lines,
+			textStyle.Render(truncateText("Changes apply immediately to the current track.", innerW)),
+			"",
+		)
+	}
+	perRow := 10
+	if innerW < 62 {
+		perRow = 5
+	}
+	for from := 0; from < audio.EQBandCount; from += perRow {
+		to := minInt(audio.EQBandCount, from+perRow)
+		freqs, gains, bars := m.eqBandCells(from, to)
+		lines = append(lines,
+			fitLine(freqs, innerW),
+			fitLine(gains, innerW),
+			fitLine(bars, innerW),
+			"",
+		)
+	}
+
+	preset := audio.MatchPreset(m.eq)
+	presetNames := "1 Flat  2 Bass  3 Vocal  4 Electronic"
+	if innerW < 62 {
+		presetNames = "1 Flat  2 Bass  3 Vocal  4 Elec"
+	}
+	lines = append(lines,
+		dimStyle.Render("preset  ")+accent2Style.Render(preset)+
+			faintStyle.Render("   ")+dimStyle.Render(presetNames),
+		dimStyle.Render("preamp  ")+textStyle.Render(fmt.Sprintf("%+d dB", int(math.Round(m.eq.Preamp)))),
+	)
+	if !compact {
+		lines = append(lines, "")
+	}
+	lines = append(lines,
+		accent2Style.Render(currentGlyphs.LeftRight)+dimStyle.Render(" band")+
+			faintStyle.Render("   ")+accent2Style.Render(currentGlyphs.UpDown)+dimStyle.Render(" gain")+
+			faintStyle.Render("   ")+accent2Style.Render("0")+dimStyle.Render(" reset")+
+			faintStyle.Render("   ")+accent2Style.Render("-/+")+dimStyle.Render(" preamp"),
+		dimStyle.Render("Esc close")+faintStyle.Render("   ")+dimStyle.Render("Tab next preset"),
+	)
+
+	height := modalHeight(contentH, len(lines)+2)
+	return renderBox("Equalizer", lines, width, height, colAccent, colAccent)
+}
+
+func (m *Model) eqBandCells(from, to int) (freqs, gains, bars string) {
+	const cellW = 6
+	for i := from; i < to; i++ {
+		freq := fitLine(dimStyle.Render(eqFrequency(i)), cellW)
+		if i == m.eqCursor {
+			freq = selectedStyle.Render(fitLine(eqFrequency(i), cellW))
+		}
+		gainValue := int(math.Round(m.eq.Gains[i]))
+		gainText := fmt.Sprintf("%+d", gainValue)
+		if gainValue == 0 {
+			gainText = "0"
+		}
+		gain := fitLine(gainCell(gainValue, gainText), cellW)
+		if i == m.eqCursor {
+			gain = selectedStyle.Render(fitLine(gainText, cellW))
+		}
+		bars += fitLine(eqBar(gainValue), cellW)
+		freqs += freq
+		gains += gain
+	}
+	return freqs, gains, bars
+}
+
+func eqFrequency(index int) string {
+	if index < 0 || index >= len(audio.EQBands) {
+		return ""
+	}
+	hz := audio.EQBands[index]
+	if hz >= 1000 {
+		return fmt.Sprintf("%dk", int(hz/1000))
+	}
+	return fmt.Sprintf("%d", int(hz))
+}
+
+func gainCell(value int, text string) string {
+	switch {
+	case value > 0:
+		return successStyle.Render(text)
+	case value < 0:
+		return errorStyle.Render(text)
+	default:
+		return dimStyle.Render(text)
+	}
+}
+
+func eqBar(value int) string {
+	const width = 4
+	fill := currentGlyphs.VolumeFull
+	empty := currentGlyphs.VolumeEmpty
+	if fill == "" {
+		fill = "#"
+	}
+	if empty == "" {
+		empty = "-"
+	}
+	level := int(math.Round(math.Abs(float64(value)) / 12 * width))
+	if level < 0 {
+		level = 0
+	}
+	if level > width {
+		level = width
+	}
+	bar := strings.Repeat(fill, level) + strings.Repeat(empty, width-level)
+	switch {
+	case value > 0:
+		return successStyle.Render(bar)
+	case value < 0:
+		return errorStyle.Render(bar)
+	default:
+		return faintStyle.Render(bar)
+	}
 }
 
 func (m *Model) renderM3UModal(w, contentH int) string {
@@ -399,6 +528,9 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{currentGlyphs.LeftRightWords, "seek 5 seconds"},
 		{"H / L", "seek 30 seconds"},
 		{"- / =", "volume down / up"},
+		{"[ / ]", "speed down / up"},
+		{"\\", "reset speed"},
+		{"Q", "equalizer"},
 		{"s / r", "shuffle / repeat (" + iconShuffle + " / " + iconRepeat + ")"},
 		{"z", "sleep timer"},
 		{"o", "sort library"},

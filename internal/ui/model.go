@@ -59,6 +59,7 @@ const (
 	modalNone modalKind = iota
 	modalAddLink
 	modalPreview
+	modalEQ
 	modalNewPlaylist
 	modalAddToPlaylist
 	modalConfirmRemoveFromPlaylist
@@ -213,6 +214,9 @@ type Model struct {
 	repeat   string
 	shuffle  bool
 	sortMode string
+	speed    float64
+	eq       audio.EQSettings
+	eqCursor int
 	spectrum []float64
 
 	sleepPreset int
@@ -273,6 +277,8 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 	if !validSortMode(sortMode) {
 		sortMode = "artist"
 	}
+	speed := audio.NormalizeSpeed(initial.Speed)
+	eq := audio.EQFromSlice(initial.EQ, initial.EQPreamp)
 
 	m := &Model{
 		cfg:           cfg,
@@ -291,6 +297,8 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 		repeat:        repeat,
 		shuffle:       initial.Shuffle,
 		sortMode:      sortMode,
+		speed:         speed,
+		eq:            eq,
 		theme:         applyTheme(initial.Theme),
 		jobSeen:       make(map[int]download.Status),
 		groupNotified: make(map[int]bool),
@@ -307,6 +315,8 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 	m.searchInput = newInput("/ ", "search title, artist, album"+currentGlyphs.Ellipsis, 120)
 
 	engine.SetVolume(float64(volume) / 100)
+	engine.SetSpeed(speed)
+	engine.SetEQ(eq)
 	return m
 }
 
@@ -782,12 +792,15 @@ func (m *Model) currentPosition() time.Duration {
 
 func (m *Model) saveSession() {
 	st := session.State{
-		Volume:  m.volume,
-		Repeat:  m.repeat,
-		Shuffle: m.shuffle,
-		View:    m.view,
-		Theme:   m.theme,
-		Sort:    m.sortMode,
+		Volume:   m.volume,
+		Repeat:   m.repeat,
+		Shuffle:  m.shuffle,
+		View:     m.view,
+		Theme:    m.theme,
+		Sort:     m.sortMode,
+		Speed:    m.speed,
+		EQ:       m.eq.GainsSlice(),
+		EQPreamp: m.eq.Preamp,
 	}
 	if m.current != nil {
 		st.Track = m.current.Path
@@ -1109,11 +1122,20 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 	if !m.loaded || m.paused || m.ended || m.current == nil || m.duration <= 0 || m.crossfadeTried {
 		return nil
 	}
-	if m.duration <= 2*crossfadeDuration || m.position < 500*time.Millisecond {
+	speed := m.speed
+	if speed <= 0 {
+		speed = 1
+	}
+	durationWall := time.Duration(float64(m.duration) / speed)
+	if durationWall <= 2*crossfadeDuration || m.position < 500*time.Millisecond {
 		return nil
 	}
 	remaining := m.duration - m.position
-	if remaining <= 0 || remaining > crossfadeDuration {
+	if remaining <= 0 {
+		return nil
+	}
+	remainingWall := time.Duration(float64(remaining) / speed)
+	if remainingWall > crossfadeDuration {
 		return nil
 	}
 	m.crossfadeTried = true
@@ -1132,15 +1154,18 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 		return nil
 	}
 	fade := crossfadeDuration
-	if remaining < fade {
-		fade = remaining
+	if remainingWall < fade {
+		fade = remainingWall
 	}
 	if fade < 500*time.Millisecond {
 		return nil
 	}
-	if next.Duration > 0 && next.Duration < 2*fade {
-		// Avoid starting a track that would be gone before it faded in.
-		return nil
+	if next.Duration > 0 {
+		nextWall := time.Duration(float64(next.Duration) / speed)
+		if nextWall < 2*fade {
+			// Avoid starting a track that would be gone before it faded in.
+			return nil
+		}
 	}
 	if err := m.engine.CrossfadeTo(next.Path, next.Duration, 0, fade); err != nil {
 		return nil
@@ -1246,6 +1271,82 @@ func (m *Model) setVolume(v int) {
 	m.volume = v
 	m.engine.SetVolume(float64(v) / 100)
 	m.markDirty()
+}
+
+func (m *Model) changeSpeed(delta float64) {
+	next := audio.NormalizeSpeed(m.speed + delta)
+	if next == m.speed {
+		m.setToast("Speed: "+audio.SpeedLabel(m.speed), toastInfo, 1500*time.Millisecond)
+		return
+	}
+	m.speed = next
+	m.engine.SetSpeed(next)
+	m.markDirty()
+	m.setToast("Speed "+audio.SpeedLabel(next)+" (tape-style)", toastInfo, 2*time.Second)
+}
+
+func (m *Model) resetSpeed() {
+	if m.speed == 1 {
+		m.setToast("Speed: 1x", toastInfo, 1500*time.Millisecond)
+		return
+	}
+	m.speed = 1
+	m.engine.SetSpeed(1)
+	m.markDirty()
+	m.setToast("Speed 1x", toastInfo, 1500*time.Millisecond)
+}
+
+func (m *Model) openEQ() {
+	m.modal = modalEQ
+	m.eqCursor = 0
+}
+
+func (m *Model) applyEQ() {
+	m.eq = m.eq.Normalize()
+	m.engine.SetEQ(m.eq)
+	m.markDirty()
+}
+
+func (m *Model) adjustEQBand(delta float64) {
+	if m.eqCursor < 0 || m.eqCursor >= audio.EQBandCount {
+		m.eqCursor = 0
+	}
+	m.eq.Gains[m.eqCursor] += delta
+	m.applyEQ()
+}
+
+func (m *Model) resetEQBand() {
+	if m.eqCursor < 0 || m.eqCursor >= audio.EQBandCount {
+		m.eqCursor = 0
+	}
+	m.eq.Gains[m.eqCursor] = 0
+	m.applyEQ()
+}
+
+func (m *Model) adjustEQPreamp(delta float64) {
+	m.eq.Preamp += delta
+	m.applyEQ()
+}
+
+func (m *Model) setEQPreset(index int) bool {
+	if index < 0 || index >= len(audio.EqualizerPresets) {
+		return false
+	}
+	m.eq = audio.EqualizerPresets[index].Settings
+	m.applyEQ()
+	return true
+}
+
+func (m *Model) cycleEQPreset() {
+	current := audio.MatchPreset(m.eq)
+	next := 0
+	for i, preset := range audio.EqualizerPresets {
+		if preset.Name == current {
+			next = (i + 1) % len(audio.EqualizerPresets)
+			break
+		}
+	}
+	_ = m.setEQPreset(next)
 }
 
 func (m *Model) cycleRepeat() {

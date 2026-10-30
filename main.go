@@ -34,7 +34,7 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	defer recoverPanic()
@@ -167,6 +167,8 @@ func main() {
 	}
 	trackStats := stats.Load(cfg.DataDir)
 	engine := audio.NewWithRate(float64(state.Volume)/100, rateValue)
+	engine.SetSpeed(state.Speed)
+	engine.SetEQ(audio.EQFromSlice(state.EQ, state.EQPreamp))
 	mgr := download.NewManager(download.Options{
 		MusicDir:    cfg.MusicDir,
 		DataDir:     cfg.DataDir,
