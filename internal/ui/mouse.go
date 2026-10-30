@@ -419,20 +419,25 @@ func (m *Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.X < left || msg.X >= left+width {
 		return m, nil
 	}
+	items := m.downloadListItems()
+	selected := m.selectedDownloadItem(items)
 	rows := maxInt(1, height-2-5)
 	offset := 0
-	if m.downloadsCur >= rows {
-		offset = m.downloadsCur - rows + 1
+	if selected >= rows {
+		offset = selected - rows + 1
 	}
-	// Header (1 line inside), blank line, then one line per job.
+	// Header (1 line inside), blank line, then one line per job or group.
 	row := msg.Y - (1 + top + 3)
 	if row < 0 || row >= rows {
 		return m, nil
 	}
 	idx := offset + row
-	if idx < 0 || idx >= len(m.jobs) {
+	if idx < 0 || idx >= len(items) {
 		return m, nil
 	}
-	m.downloadsCur = idx
+	if items[idx].header {
+		return m, nil
+	}
+	m.downloadsCur = items[idx].jobIndex
 	return m, nil
 }

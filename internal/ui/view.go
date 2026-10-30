@@ -1066,6 +1066,11 @@ func (m *Model) renderModalHints(w int) string {
 			keyHint("esc", "cancel"),
 			keyHint("ctrl+v", "paste"),
 		)
+	case modalPreview:
+		return hintLine(
+			keyHint("enter", "queue all"),
+			keyHint("esc", "cancel"),
+		)
 	case modalImportM3U, modalExportM3U:
 		return hintLine(
 			keyHint("enter", "confirm"),
@@ -1093,6 +1098,7 @@ func (m *Model) renderModalHints(w int) string {
 		if w < 80 {
 			return hintLine(
 				keyHint(currentGlyphs.UpDown, "select"),
+				keyHint("r", "retry"),
 				keyHint("c", "cancel"),
 				keyHint("C", "clear"),
 				keyHint("esc", "close"),
@@ -1100,6 +1106,7 @@ func (m *Model) renderModalHints(w int) string {
 		}
 		return hintLine(
 			keyHint(currentGlyphs.UpDown, "select"),
+			keyHint("r/R", "retry"),
 			keyHint("c", "cancel"),
 			keyHint("C", "clear finished"),
 			keyHint("a", "add link"),

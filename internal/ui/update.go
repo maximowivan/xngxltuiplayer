@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case libraryLoadedMsg:
 		return m, m.handleLibraryLoaded(msg)
+
+	case previewLoadedMsg:
+		return m, m.handlePreviewLoaded(msg)
 
 	case libraryChangedMsg:
 		cmds := []tea.Cmd{m.waitLibraryChange()}
@@ -387,6 +391,16 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case modalPreview:
+		switch key {
+		case "esc", "q":
+			m.closeModal()
+			return m, nil
+		case "enter":
+			return m, m.confirmPreview()
+		}
+		return m, nil
+
 	case modalImportM3U, modalExportM3U:
 		switch key {
 		case "esc":
@@ -569,12 +583,38 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "end", "G":
 			m.downloadsCur = maxInt(0, len(m.jobs)-1)
 			return m, nil
-		case "c":
+		case "c", "x":
 			if job, ok := m.selectedJob(); ok && !job.Status.Terminal() {
 				m.mgr.Cancel(job.ID)
 				m.setToast("Canceling download"+currentGlyphs.Ellipsis, toastInfo, 2*time.Second)
 			} else if ok {
 				m.setToast("This download has already finished", toastInfo, 2*time.Second)
+			}
+			return m, nil
+		case "r":
+			if job, ok := m.selectedJob(); ok {
+				if m.mgr.Retry(job.ID) {
+					m.setToast("Retrying download"+currentGlyphs.Ellipsis, toastInfo, 2*time.Second)
+					m.refreshJobs()
+				} else {
+					m.setToast("Only failed or canceled downloads can be retried", toastInfo, 3*time.Second)
+				}
+			}
+			return m, nil
+		case "R":
+			if n := m.mgr.RetryFailed(); n > 0 {
+				m.setToast(fmt.Sprintf("Retrying %d downloads", n), toastInfo, 3*time.Second)
+				m.refreshJobs()
+			} else {
+				m.setToast("No failed downloads to retry", toastInfo, 2*time.Second)
+			}
+			return m, nil
+		case "X":
+			if n := m.mgr.CancelAll(); n > 0 {
+				m.setToast(fmt.Sprintf("Canceled %d downloads", n), toastInfo, 3*time.Second)
+				m.refreshJobs()
+			} else {
+				m.setToast("No active downloads", toastInfo, 2*time.Second)
 			}
 			return m, nil
 		case "C":

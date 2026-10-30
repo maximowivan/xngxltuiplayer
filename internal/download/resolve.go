@@ -25,26 +25,48 @@ type Meta struct {
 	CoverURL    string
 	SourceURL   string
 	DownloadURL string
+	TrackNumber int
+	DiscNumber  int
+}
+
+type ytThumbnail struct {
+	URL string `json:"url"`
 }
 
 type ytInfo struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Track       string   `json:"track"`
-	Artist      string   `json:"artist"`
-	Creator     string   `json:"creator"`
-	Album       string   `json:"album"`
-	Uploader    string   `json:"uploader"`
-	Channel     string   `json:"channel"`
-	ReleaseYear int      `json:"release_year"`
-	ReleaseDate string   `json:"release_date"`
-	Duration    float64  `json:"duration"`
-	Thumbnail   string   `json:"thumbnail"`
-	WebpageURL  string   `json:"webpage_url"`
-	URL         string   `json:"url"`
-	Ext         string   `json:"ext"`
-	IsLive      bool     `json:"is_live"`
-	Entries     []ytInfo `json:"entries"`
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Track       string        `json:"track"`
+	Artist      string        `json:"artist"`
+	Creator     string        `json:"creator"`
+	Album       string        `json:"album"`
+	Uploader    string        `json:"uploader"`
+	Channel     string        `json:"channel"`
+	ReleaseYear int           `json:"release_year"`
+	ReleaseDate string        `json:"release_date"`
+	Duration    float64       `json:"duration"`
+	Thumbnail   string        `json:"thumbnail"`
+	Thumbnails  []ytThumbnail `json:"thumbnails"`
+	WebpageURL  string        `json:"webpage_url"`
+	URL         string        `json:"url"`
+	Ext         string        `json:"ext"`
+	IsLive      bool          `json:"is_live"`
+	Entries     []ytInfo      `json:"entries"`
+}
+
+func infoThumbnail(info *ytInfo) string {
+	if info == nil {
+		return ""
+	}
+	if u := cleanText(info.Thumbnail); u != "" {
+		return u
+	}
+	for i := len(info.Thumbnails) - 1; i >= 0; i-- {
+		if u := cleanText(info.Thumbnails[i].URL); u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 type oembedResponse struct {
@@ -67,6 +89,17 @@ type itunesTrack struct {
 }
 
 func (m *Manager) resolve(ctx context.Context, link Link, id int) (Meta, error) {
+	if link.Seed != nil {
+		meta := *link.Seed
+		if strings.TrimSpace(meta.SourceURL) == "" {
+			meta.SourceURL = link.URL
+		}
+		if strings.TrimSpace(meta.DownloadURL) != "" {
+			return meta, nil
+		}
+		return m.findAudio(ctx, meta, id)
+	}
+
 	m.setDetail(id, "resolving link")
 	if link.Kind == KindSpotifyShort {
 		resolved, err := m.expandSpotifyShort(ctx, link.URL)
@@ -130,11 +163,49 @@ func (m *Manager) expandSpotifyShort(ctx context.Context, shortURL string) (Link
 			next = base.ResolveReference(next)
 		}
 		current = next.String()
-		if strings.Contains(strings.ToLower(current), "open.spotify.com/track/") {
+		if strings.Contains(strings.ToLower(current), "open.spotify.com/") {
 			return Classify(current)
 		}
 	}
 	return Link{}, errors.New("could not resolve the Spotify short link — paste the full track link instead")
+}
+
+func (m *Manager) expandSoundCloudShort(ctx context.Context, shortURL string) (Link, error) {
+	client := *m.client
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	current := shortURL
+	for i := 0; i < 5; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, current, nil)
+		if err != nil {
+			return Link{}, err
+		}
+		req.Header.Set("User-Agent", userAgent)
+		resp, err := client.Do(req)
+		if err != nil {
+			return Link{}, fmt.Errorf("resolve SoundCloud short link: %w", err)
+		}
+		_ = resp.Body.Close()
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			break
+		}
+		next, err := url.Parse(loc)
+		if err != nil {
+			break
+		}
+		if !next.IsAbs() {
+			base, _ := url.Parse(current)
+			next = base.ResolveReference(next)
+		}
+		current = next.String()
+		lower := strings.ToLower(current)
+		if strings.Contains(lower, "soundcloud.com/") && !strings.Contains(lower, "on.soundcloud.com") {
+			return Classify(current)
+		}
+	}
+	return Link{}, errors.New("could not resolve the SoundCloud short link — paste the full set or track link")
 }
 
 func (m *Manager) resolveSpotify(ctx context.Context, link Link, id int) (Meta, error) {
@@ -175,8 +246,27 @@ func (m *Manager) resolveSpotify(ctx context.Context, link Link, id int) (Meta, 
 		}
 	}
 
+	return m.findAudio(ctx, Meta{
+		Title:     title,
+		Artist:    artist,
+		Album:     album,
+		Year:      year,
+		Duration:  duration,
+		CoverURL:  coverURL,
+		SourceURL: link.URL,
+	}, id)
+}
+
+// findAudio searches YouTube for a track whose metadata is already known. It
+// keeps the supplied title, artist, album and duration, and fills only fields
+// that are still empty.
+func (m *Manager) findAudio(ctx context.Context, meta Meta, id int) (Meta, error) {
+	title := cleanText(meta.Title)
+	if title == "" {
+		return Meta{}, errors.New("track has no title")
+	}
 	query := title + " audio"
-	if artist != "" {
+	if artist := cleanText(meta.Artist); artist != "" {
 		query = artist + " " + title + " audio"
 	}
 	m.setDetail(id, "finding audio")
@@ -191,32 +281,18 @@ func (m *Manager) resolveSpotify(ctx context.Context, link Link, id int) (Meta, 
 		return Meta{}, fmt.Errorf("could not find audio for %q: %w", title, err)
 	}
 
-	if artist == "" {
-		artist = cleanArtist(firstNonEmpty(info.Artist, info.Creator, info.Uploader, info.Channel))
-	}
-	if duration <= 0 {
-		duration = secondsToDuration(info.Duration)
-	}
-	if coverURL == "" {
-		coverURL = info.Thumbnail
-	}
-	downloadURL := infoURL(info)
-	if downloadURL == "" {
-		return Meta{}, errors.New("could not build a download URL for the matched audio")
-	}
-
-	meta := Meta{
-		Title:       title,
-		Artist:      artist,
-		Album:       album,
-		Year:        year,
-		Duration:    duration,
-		CoverURL:    coverURL,
-		SourceURL:   link.URL,
-		DownloadURL: downloadURL,
-	}
 	if meta.Artist == "" {
-		meta.Artist = cleanArtist(info.Uploader)
+		meta.Artist = cleanArtist(firstNonEmpty(info.Artist, info.Creator, info.Uploader, info.Channel))
+	}
+	if meta.Duration <= 0 {
+		meta.Duration = secondsToDuration(info.Duration)
+	}
+	if meta.CoverURL == "" {
+		meta.CoverURL = info.Thumbnail
+	}
+	meta.DownloadURL = infoURL(info)
+	if meta.DownloadURL == "" {
+		return Meta{}, errors.New("could not build a download URL for the matched audio")
 	}
 	return meta, nil
 }
@@ -456,7 +532,7 @@ func infoURL(info *ytInfo) string {
 	return ""
 }
 
-var suffixPattern = regexp.MustCompile(`(?i)\s*[\[(](official\s*(music\s*)?(video|audio)|official\s*lyric\s*video|lyric\s*video|audio|visualizer|hd|hq|4k|explicit)[\])]\s*$`)
+var suffixPattern = regexp.MustCompile(`(?i)\s*[\[(]\s*(official\s*(music\s*)?(video|audio)|official\s*lyric\s*video|lyric\s*video|video\s*(oficial|lyric)|audio\s*oficial|performance\s*video|audio|visualizer|hd|hq|4k|explicit)\s*[\])]\s*$`)
 
 func cleanVideoSuffix(title string) string {
 	for {
@@ -471,17 +547,28 @@ func cleanVideoSuffix(title string) string {
 }
 
 func stripArtistPrefix(title, artist string) string {
-	lowerTitle := strings.ToLower(title)
-	lowerArtist := strings.ToLower(strings.TrimSpace(artist))
-	if lowerArtist == "" {
+	normArtist := normalizeTitle(artist)
+	if normArtist == "" {
 		return title
 	}
-	prefixes := []string{lowerArtist + " - ", lowerArtist + " – ", lowerArtist + " — ", lowerArtist + ": "}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(lowerTitle, prefix) {
-			rest := title[len(prefix):]
-			if strings.TrimSpace(rest) != "" {
-				return strings.TrimSpace(rest)
+	for _, sep := range []string{" - ", " – ", " — ", ": "} {
+		idx := strings.Index(title, sep)
+		if idx <= 0 {
+			continue
+		}
+		left := normalizeTitle(title[:idx])
+		if left == normArtist || strings.Contains(left, normArtist) || (len(left) > 3 && strings.Contains(normArtist, left)) {
+			if rest := strings.TrimSpace(title[idx+len(sep):]); rest != "" {
+				return rest
+			}
+		}
+	}
+	// Some uploads put the artist at the end: "Song (Video Oficial) - Artist".
+	if idx := strings.LastIndex(title, " - "); idx > 0 {
+		tail := normalizeTitle(title[idx+3:])
+		if strings.Contains(tail, normArtist) {
+			if rest := strings.TrimSpace(title[:idx]); rest != "" {
+				return rest
 			}
 		}
 	}
@@ -539,8 +626,21 @@ func upgradeArtwork(u string) string {
 
 var nonAlnum = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 
+var accentFold = strings.NewReplacer(
+	"á", "a", "à", "a", "â", "a", "ä", "a", "ã", "a", "å", "a", "ā", "a", "ă", "a", "ą", "a",
+	"é", "e", "è", "e", "ê", "e", "ë", "e", "ē", "e", "ė", "e", "ę", "e",
+	"í", "i", "ì", "i", "î", "i", "ï", "i", "ī", "i", "į", "i",
+	"ó", "o", "ò", "o", "ô", "o", "ö", "o", "õ", "o", "ø", "o", "ō", "o", "ő", "o",
+	"ú", "u", "ù", "u", "û", "u", "ü", "u", "ū", "u", "ų", "u",
+	"ñ", "n", "ń", "n", "ň", "n",
+	"ç", "c", "ć", "c", "č", "c",
+	"ý", "y", "ÿ", "y", "š", "s", "ž", "z", "ź", "z", "ż", "z",
+	"ř", "r", "ď", "d", "ť", "t", "ł", "l", "ß", "ss", "æ", "ae", "œ", "oe",
+)
+
 func normalizeTitle(s string) string {
 	s = strings.ToLower(s)
+	s = accentFold.Replace(s)
 	// Remove bracketed suffixes and featured-artist credits for comparison.
 	for {
 		start := strings.IndexAny(s, "([")

@@ -61,23 +61,29 @@ func (s Status) Terminal() bool {
 
 // Job is a snapshot of one download.
 type Job struct {
-	ID       int
-	URL      string
-	Kind     Kind
-	Title    string
-	Artist   string
-	Stage    string
-	Detail   string
-	Progress float64
-	Status   Status
-	Err      string
-	Warning  string
-	Path     string
-	Created  time.Time
-	Finished time.Time
+	ID          int
+	URL         string
+	Kind        Kind
+	Title       string
+	Artist      string
+	Stage       string
+	Detail      string
+	Progress    float64
+	Status      Status
+	Err         string
+	Warning     string
+	Path        string
+	Created     time.Time
+	Finished    time.Time
+	GroupID     int
+	GroupTitle  string
+	GroupKind   Kind
+	TrackNumber int
+	TrackTotal  int
 
-	link   Link
-	cancel context.CancelFunc
+	link    Link
+	cancel  context.CancelFunc
+	running bool
 }
 
 // Options configures a Manager.
@@ -88,9 +94,10 @@ type Options struct {
 	Tools       Tools
 	CookiesFile string
 	HTTPClient  *http.Client
+	Workers     int
 }
 
-// Manager serializes downloads and exposes their progress.
+// Manager runs downloads and exposes their progress.
 type Manager struct {
 	opts   Options
 	client *http.Client
@@ -100,21 +107,33 @@ type Manager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu           sync.Mutex
-	jobs         map[int]*Job
-	order        []int
-	nextID       int
-	queue        chan int
-	activeCancel context.CancelFunc
+	mu          sync.Mutex
+	jobs        map[int]*Job
+	order       []int
+	nextID      int
+	nextGroupID int
+	queue       chan int
+	active      map[int]context.CancelFunc
+
+	// runJSON executes yt-dlp and returns its JSON output. Tests replace it to
+	// exercise playlist parsing without the real binary.
+	runJSON func(ctx context.Context, args []string) ([]byte, error)
 }
 
-// NewManager creates a manager and starts its single worker.
+// NewManager creates a manager and starts its download workers.
 func NewManager(opts Options) *Manager {
 	if opts.TempDir == "" {
 		opts.TempDir = filepath.Join(opts.DataDir, "tmp")
 	}
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = defaultHTTPClient()
+	}
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = 2
+	}
+	if workers > 6 {
+		workers = 6
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
@@ -124,13 +143,16 @@ func NewManager(opts Options) *Manager {
 		ctx:    ctx,
 		cancel: cancel,
 		jobs:   make(map[int]*Job),
-		queue:  make(chan int, 64),
+		queue:  make(chan int, 1024),
+		active: make(map[int]context.CancelFunc),
 	}
 	_ = os.MkdirAll(opts.MusicDir, 0o755)
 	_ = os.MkdirAll(opts.TempDir, 0o755)
 	m.cleanOldTemp()
-	m.wg.Add(1)
-	go m.worker()
+	m.wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go m.worker()
+	}
 	return m
 }
 
@@ -150,12 +172,12 @@ func defaultHTTPClient() *http.Client {
 	return &http.Client{Transport: transport}
 }
 
-// Close stops the worker and any active download.
+// Close stops all workers and active downloads.
 func (m *Manager) Close() {
 	m.cancel()
 	m.mu.Lock()
-	if m.activeCancel != nil {
-		m.activeCancel()
+	for _, cancel := range m.active {
+		cancel()
 	}
 	m.mu.Unlock()
 
@@ -170,24 +192,34 @@ func (m *Manager) Close() {
 	}
 }
 
+func (m *Manager) checkTools(needsYtDlp bool) error {
+	missing := m.tools.Missing(needsYtDlp)
+	if len(missing) == 0 {
+		return nil
+	}
+	hints := make([]string, len(missing))
+	for i, name := range missing {
+		hints[i] = InstallHint(name)
+	}
+	verb := "is required"
+	if len(missing) > 1 {
+		verb = "are required"
+	}
+	return fmt.Errorf("%s %s — %s",
+		strings.Join(missing, ", "), verb, strings.Join(hints, "; "))
+}
+
 // Enqueue validates a link and adds it to the download queue.
 func (m *Manager) Enqueue(raw string) (Job, error) {
 	link, err := Classify(raw)
 	if err != nil {
 		return Job{}, err
 	}
-	needsYtDlp := link.Kind != KindDirect
-	if missing := m.tools.Missing(needsYtDlp); len(missing) > 0 {
-		hints := make([]string, len(missing))
-		for i, name := range missing {
-			hints[i] = InstallHint(name)
-		}
-		verb := "is required"
-		if len(missing) > 1 {
-			verb = "are required"
-		}
-		return Job{}, fmt.Errorf("%s %s — %s",
-			strings.Join(missing, ", "), verb, strings.Join(hints, "; "))
+	if link.Kind.Batch() {
+		return Job{}, errors.New("this link contains several tracks — use the playlist preview")
+	}
+	if err := m.checkTools(link.Kind != KindDirect); err != nil {
+		return Job{}, err
 	}
 
 	select {
@@ -264,6 +296,86 @@ func (m *Manager) Cancel(id int) {
 	j.Finished = time.Now()
 }
 
+// Retry re-queues one failed or canceled job. It returns false when the job is
+// missing or still active.
+func (m *Manager) Retry(id int) bool {
+	m.mu.Lock()
+	j := m.jobs[id]
+	if j == nil || j.running || (j.Status != StatusFailed && j.Status != StatusCanceled) {
+		m.mu.Unlock()
+		return false
+	}
+	resetJobForRetry(j)
+	m.mu.Unlock()
+
+	select {
+	case m.queue <- id:
+		return true
+	case <-m.ctx.Done():
+		return false
+	}
+}
+
+// RetryFailed re-queues every failed or canceled job and returns how many were
+// accepted.
+func (m *Manager) RetryFailed() int {
+	m.mu.Lock()
+	ids := make([]int, 0)
+	for _, id := range m.order {
+		j := m.jobs[id]
+		if j == nil || j.running || (j.Status != StatusFailed && j.Status != StatusCanceled) {
+			continue
+		}
+		resetJobForRetry(j)
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+
+	queued := 0
+	for _, id := range ids {
+		select {
+		case m.queue <- id:
+			queued++
+		case <-m.ctx.Done():
+			return queued
+		}
+	}
+	return queued
+}
+
+// CancelAll stops every queued or running job.
+func (m *Manager) CancelAll() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, id := range m.order {
+		j := m.jobs[id]
+		if j == nil || j.Status.Terminal() {
+			continue
+		}
+		if j.cancel != nil {
+			j.cancel()
+		}
+		j.Status = StatusCanceled
+		j.Stage = "canceled"
+		j.Detail = "download canceled"
+		j.Finished = time.Now()
+		n++
+	}
+	return n
+}
+
+func resetJobForRetry(j *Job) {
+	j.Status = StatusQueued
+	j.Stage = "queued"
+	j.Detail = "waiting for a free slot"
+	j.Progress = -1
+	j.Err = ""
+	j.Warning = ""
+	j.Path = ""
+	j.Finished = time.Time{}
+}
+
 // ClearFinished removes completed jobs from the list.
 func (m *Manager) ClearFinished() int {
 	m.mu.Lock()
@@ -311,10 +423,11 @@ func (m *Manager) worker() {
 func (m *Manager) run(id int) {
 	m.mu.Lock()
 	j := m.jobs[id]
-	if j == nil || j.Status.Terminal() {
+	if j == nil || j.Status.Terminal() || j.running {
 		m.mu.Unlock()
 		return
 	}
+	j.running = true
 	ctx, cancel := context.WithCancel(m.ctx)
 	j.cancel = cancel
 	j.Status = StatusResolving
@@ -322,7 +435,7 @@ func (m *Manager) run(id int) {
 	j.Detail = "fetching metadata"
 	j.Progress = -1
 	link := j.link
-	m.activeCancel = cancel
+	m.active[id] = cancel
 	m.mu.Unlock()
 
 	path, warning, err := safeProcess(func() (string, string, error) {
@@ -335,7 +448,7 @@ func (m *Manager) run(id int) {
 	if j.cancel != nil {
 		j.cancel = nil
 	}
-	m.activeCancel = nil
+	delete(m.active, id)
 	if !j.Status.Terminal() {
 		switch {
 		case ctxErr != nil || errors.Is(err, context.Canceled):
@@ -359,6 +472,7 @@ func (m *Manager) run(id int) {
 			j.Finished = time.Now()
 		}
 	}
+	j.running = false
 	m.mu.Unlock()
 }
 

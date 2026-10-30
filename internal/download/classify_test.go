@@ -35,7 +35,7 @@ func TestClassify(t *testing.T) {
 		{
 			name:    "spotify album rejected",
 			raw:     "https://open.spotify.com/album/4uLU6hMCjMI75M1A2tKUQC",
-			wantErr: "not supported",
+			wantErr: "not supported yet",
 		},
 		{
 			name: "soundcloud track",
@@ -44,9 +44,10 @@ func TestClassify(t *testing.T) {
 			url:  "https://soundcloud.com/artist/night-drive",
 		},
 		{
-			name:    "soundcloud set rejected",
-			raw:     "https://soundcloud.com/artist/sets/album",
-			wantErr: "not supported",
+			name: "soundcloud set",
+			raw:  "https://soundcloud.com/artist/sets/night-drive?si=abc",
+			kind: KindSoundCloudSet,
+			url:  "https://soundcloud.com/artist/sets/night-drive",
 		},
 		{
 			name:    "soundcloud profile rejected",
@@ -56,7 +57,7 @@ func TestClassify(t *testing.T) {
 		{
 			name:    "soundcloud profile tab rejected",
 			raw:     "https://soundcloud.com/artist/tracks",
-			wantErr: "not supported",
+			wantErr: "specific SoundCloud track or set",
 		},
 		{
 			name:    "soundcloud extra path rejected",
@@ -93,9 +94,22 @@ func TestClassify(t *testing.T) {
 			wantErr: "not supported",
 		},
 		{
-			name:    "youtube playlist rejected",
-			raw:     "https://www.youtube.com/playlist?list=PL123",
-			wantErr: "not supported",
+			name: "youtube playlist",
+			raw:  "https://www.youtube.com/playlist?list=PL1234567890&si=abc",
+			kind: KindYouTubePlaylist,
+			url:  "https://www.youtube.com/playlist?list=PL1234567890",
+		},
+		{
+			name: "youtube music playlist",
+			raw:  "https://music.youtube.com/playlist?list=OLAK5uy_abc12345",
+			kind: KindYouTubePlaylist,
+			url:  "https://www.youtube.com/playlist?list=OLAK5uy_abc12345",
+		},
+		{
+			name: "youtube embed playlist",
+			raw:  "https://www.youtube.com/embed/videoseries?list=PL1234567890",
+			kind: KindYouTubePlaylist,
+			url:  "https://www.youtube.com/playlist?list=PL1234567890",
 		},
 		{
 			name:    "empty",

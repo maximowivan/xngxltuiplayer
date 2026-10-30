@@ -20,6 +20,8 @@ func (m *Model) renderModal(w, contentH int) string {
 	switch m.modal {
 	case modalAddLink:
 		return m.renderAddLinkModal(w, contentH)
+	case modalPreview:
+		return m.renderPreviewModal(w, contentH)
 	case modalNewPlaylist:
 		return m.renderNewPlaylistModal(w, contentH)
 	case modalAddToPlaylist:
@@ -65,20 +67,92 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 		textStyle.Render(truncateText("Paste a link and xngxltuiplayer will download, convert and tag it.", innerW)),
 		"",
 		accent2Style.Render("Spotify track") + faintStyle.Render(currentGlyphs.Separator) +
-			accent2Style.Render("SoundCloud track") + faintStyle.Render(currentGlyphs.Separator) +
-			accent2Style.Render("YouTube") + faintStyle.Render(currentGlyphs.Separator) +
+			accent2Style.Render("SoundCloud track/set") + faintStyle.Render(currentGlyphs.Separator) +
+			accent2Style.Render("YouTube video/playlist") + faintStyle.Render(currentGlyphs.Separator) +
 			accent2Style.Render("audio URL"),
 		"",
 		fitLine(m.linkInput.View(), innerW),
 		"",
 	}
-	if m.modalErr != "" {
+	switch {
+	case m.previewLoading:
+		frames := currentGlyphs.Spinner
+		if len(frames) == 0 {
+			frames = []rune("|/-\\")
+		}
+		lines = append(lines, warningStyle.Render(fmt.Sprintf("%c Reading the playlist%s", frames[m.spinner%len(frames)], currentGlyphs.Ellipsis)))
+	case m.modalErr != "":
 		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
-	} else {
+	default:
 		lines = append(lines, dimStyle.Render("The file is saved to your music folder as MP3."))
 	}
-	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported "+currentGlyphs.Dash+" use single tracks."))
+	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported "+currentGlyphs.Dash+" use a YouTube or SoundCloud playlist."))
 	return renderBox("Add music", lines, width, height, colAccent, colAccent)
+}
+
+func (m *Model) renderPreviewModal(w, contentH int) string {
+	if m.preview == nil {
+		return ""
+	}
+	preview := *m.preview
+	width := minInt(84, maxInt(48, w-8))
+	innerW := width - 4
+	maxRows := 8
+
+	build := func(rows int) []string {
+		title := cleanText(preview.Title)
+		if title == "" {
+			title = cleanText(preview.URL)
+		}
+		subtitle := preview.Kind.String()
+		if subtitleText := cleanText(preview.Subtitle); subtitleText != "" {
+			subtitle += currentGlyphs.Separator + subtitleText
+		}
+		summary := fmt.Sprintf("%d tracks", len(preview.Tracks))
+		if preview.TotalDuration > 0 && !preview.PartialDuration {
+			summary += " " + currentGlyphs.Separator + " " + model.FormatDuration(preview.TotalDuration)
+		}
+		if preview.Skipped > 0 {
+			summary += fmt.Sprintf(" %s %d skipped", currentGlyphs.Separator, preview.Skipped)
+		}
+
+		lines := []string{
+			sectionStyle.Render(truncateText(title, innerW)),
+			dimStyle.Render(truncateText(subtitle, innerW)),
+			"",
+			textStyle.Render(summary),
+			"",
+		}
+		if preview.Truncated {
+			lines = append(lines, warningStyle.Render(fmt.Sprintf("Only the first %d tracks will be downloaded.", len(preview.Tracks))))
+		}
+		for i := 0; i < rows && i < len(preview.Tracks); i++ {
+			track := preview.Tracks[i]
+			label := cleanText(track.Title)
+			if artist := cleanText(track.Artist); artist != "" {
+				label = artist + " " + currentGlyphs.Dash + " " + label
+			}
+			prefix := fmt.Sprintf("%2d. ", i+1)
+			lines = append(lines, dimStyle.Render(prefix)+truncateText(label, innerW-4))
+		}
+		if len(preview.Tracks) > rows {
+			lines = append(lines, faintStyle.Render(fmt.Sprintf("%s and %d more", currentGlyphs.Ellipsis, len(preview.Tracks)-rows)))
+		}
+		if m.modalErr != "" {
+			lines = append(lines, "", errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
+		}
+		lines = append(lines, "", accent2Style.Render("Enter")+dimStyle.Render(" queue all")+
+			faintStyle.Render("   ")+accent2Style.Render("Esc")+dimStyle.Render(" cancel"))
+		return lines
+	}
+
+	height := modalHeight(contentH, len(build(maxRows))+2)
+	innerH := height - 2
+	rows := maxInt(1, innerH-7)
+	if rows > maxRows {
+		rows = maxRows
+	}
+	return renderBox("Playlist preview", build(rows), width, height, colAccent, colAccent)
 }
 
 func (m *Model) renderM3UModal(w, contentH int) string {
@@ -363,9 +437,11 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 	downloads := []keyBinding{
 		{"y / enter", "confirm delete"},
 		{"esc", "cancel / close"},
-		{"c", "cancel download"},
+		{"c / x", "cancel download"},
+		{"X", "cancel all active"},
+		{"r / R", "retry selected / failed"},
 		{"C", "clear finished"},
-		{"a", "add link (downloads)"},
+		{"a", "add link or playlist"},
 		{"?", "this help"},
 		{"ctrl+c", "quit (saves session)"},
 	}
@@ -437,31 +513,41 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 
 	if len(jobs) == 0 {
 		lines = append(lines, dimStyle.Render("No downloads yet."))
-		lines = append(lines, dimStyle.Render("Press a to paste a Spotify, SoundCloud or YouTube link."))
+		lines = append(lines, dimStyle.Render("Press a to paste a track, YouTube playlist or SoundCloud set."))
 		for len(lines) < innerH {
 			lines = append(lines, "")
 		}
 		return renderBox("Downloads", lines, width, height, colAccent, colAccent)
 	}
 
+	items := m.downloadListItems()
+	selected := m.selectedDownloadItem(items)
 	rows := maxInt(1, innerH-5)
 	offset := 0
-	if m.downloadsCur >= rows {
-		offset = m.downloadsCur - rows + 1
+	if selected >= rows {
+		offset = selected - rows + 1
 	}
 	m.downloadsOff = offset
-	end := minInt(len(jobs), offset+rows)
+	end := minInt(len(items), offset+rows)
 	for i := offset; i < end; i++ {
-		job := jobs[i]
+		item := items[i]
+		if item.header {
+			lines = append(lines, accent2Style.Render(truncateText(currentGlyphs.Bullet+" "+item.title, innerW)))
+			continue
+		}
+		job := jobs[item.jobIndex]
 		icon := m.downloadStatusIcon(job.Status)
 		title := cleanText(m.jobLabel(job))
+		if job.TrackTotal > 0 {
+			title = fmt.Sprintf("%d/%d %s", job.TrackNumber, job.TrackTotal, title)
+		}
 		status := job.Status.String()
 		if !job.Status.Terminal() && job.Progress >= 0 {
 			status = fmt.Sprintf("%s %d%%", status, int(job.Progress*100))
 		}
 		left := icon + " " + title
 		row := padBetween(left, status, innerW)
-		if i == m.downloadsCur {
+		if item.jobIndex == m.downloadsCur {
 			lines = append(lines, selectedStyle.Render(row))
 		} else {
 			switch job.Status {

@@ -17,7 +17,9 @@ const (
 	KindSpotifyTrack
 	KindSpotifyShort
 	KindSoundCloud
+	KindSoundCloudSet
 	KindYouTube
+	KindYouTubePlaylist
 	KindDirect
 	KindGeneric
 )
@@ -28,8 +30,12 @@ func (k Kind) String() string {
 		return "Spotify"
 	case KindSoundCloud:
 		return "SoundCloud"
+	case KindSoundCloudSet:
+		return "SoundCloud set"
 	case KindYouTube:
 		return "YouTube"
+	case KindYouTubePlaylist:
+		return "YouTube playlist"
 	case KindDirect:
 		return "Direct audio"
 	case KindGeneric:
@@ -39,18 +45,27 @@ func (k Kind) String() string {
 	}
 }
 
-// Link is a classified, normalized download URL.
+// Batch reports whether the link resolves to several tracks.
+func (k Kind) Batch() bool {
+	return k == KindYouTubePlaylist || k == KindSoundCloudSet
+}
+
+// Link is a classified, normalized download URL. Seed carries known metadata
+// for tracks that came from a playlist or set, so the resolver does not have to
+// look the title up again.
 type Link struct {
 	Raw  string
 	URL  string
 	Kind Kind
 	ID   string
+	Seed *Meta
 }
 
 var (
-	spotifyIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{22}$`)
-	youtubeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
-	directExtensions = map[string]bool{
+	spotifyIDPattern   = regexp.MustCompile(`^[A-Za-z0-9]{22}$`)
+	youtubeIDPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+	youtubeListPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{10,64}$`)
+	directExtensions   = map[string]bool{
 		".mp3": true, ".flac": true, ".wav": true,
 		".m4a": true, ".aac": true, ".ogg": true,
 		".opus": true, ".webm": true, ".wma": true,
@@ -70,13 +85,19 @@ func Classify(raw string) (Link, error) {
 
 	if strings.HasPrefix(strings.ToLower(raw), "spotify:") {
 		parts := strings.Split(raw, ":")
-		if len(parts) >= 3 && strings.EqualFold(parts[1], "track") {
+		if len(parts) >= 3 {
+			kind := strings.ToLower(strings.TrimSpace(parts[1]))
 			id := strings.TrimSpace(parts[2])
-			if !spotifyIDPattern.MatchString(id) {
-				return Link{}, errors.New("invalid Spotify track id")
+			switch kind {
+			case "track":
+				if !spotifyIDPattern.MatchString(id) {
+					return Link{}, errors.New("invalid Spotify track id")
+				}
+				u := "https://open.spotify.com/track/" + id
+				return Link{Raw: raw, URL: u, Kind: KindSpotifyTrack, ID: id}, nil
+			case "playlist", "album":
+				return Link{}, fmt.Errorf("Spotify %s links are not supported yet — paste a single track, or use a YouTube or SoundCloud playlist", kind)
 			}
-			u := "https://open.spotify.com/track/" + id
-			return Link{Raw: raw, URL: u, Kind: KindSpotifyTrack, ID: id}, nil
 		}
 		return Link{}, errors.New("only individual Spotify tracks are supported (spotify:track:...)")
 	}
@@ -140,7 +161,9 @@ func classifySpotify(u *url.URL, raw string) (Link, error) {
 		}
 		id := parts[1]
 		return Link{Raw: raw, URL: "https://open.spotify.com/track/" + id, Kind: KindSpotifyTrack, ID: id}, nil
-	case "playlist", "album", "artist", "show", "episode", "user":
+	case "playlist", "album":
+		return Link{}, fmt.Errorf("Spotify %s links are not supported yet — paste a single track, or use a YouTube or SoundCloud playlist", kind)
+	case "artist", "show", "episode", "user":
 		return Link{}, fmt.Errorf("Spotify %s links are not supported — paste a single track link", kind)
 	default:
 		return Link{}, errors.New("unsupported Spotify link")
@@ -153,16 +176,25 @@ func classifySoundCloud(u *url.URL, raw string) (Link, error) {
 		return Link{Raw: raw, URL: u.String(), Kind: KindSoundCloud}, nil
 	}
 	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segments) >= 2 {
-		for _, part := range segments[:2] {
-			switch part {
-			case "sets", "albums", "playlists", "tracks", "likes", "reposts", "followers", "following":
-				return Link{}, errors.New("SoundCloud playlists and sets are not supported — paste a single track link")
-			}
+	for _, segment := range segments {
+		if segment == "" {
+			return Link{}, errors.New("paste a link to a specific SoundCloud track or set")
 		}
 	}
-	if len(segments) != 2 || segments[0] == "" || segments[1] == "" {
-		return Link{}, errors.New("paste a link to a specific SoundCloud track")
+	if len(segments) == 3 && strings.EqualFold(segments[1], "sets") {
+		u.Path = "/" + segments[0] + "/sets/" + segments[2]
+		u.RawQuery = ""
+		u.Fragment = ""
+		return Link{Raw: raw, URL: u.String(), Kind: KindSoundCloudSet, ID: segments[2]}, nil
+	}
+	if len(segments) >= 2 {
+		switch strings.ToLower(segments[1]) {
+		case "sets", "albums", "playlists", "tracks", "likes", "reposts", "followers", "following":
+			return Link{}, errors.New("paste a link to a specific SoundCloud track or set")
+		}
+	}
+	if len(segments) != 2 {
+		return Link{}, errors.New("paste a link to a specific SoundCloud track or set")
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
@@ -172,8 +204,20 @@ func classifySoundCloud(u *url.URL, raw string) (Link, error) {
 func classifyYouTube(u *url.URL, host, raw string) (Link, error) {
 	p := strings.Trim(u.Path, "/")
 	segments := strings.Split(p, "/")
-	if len(segments) > 0 && (segments[0] == "playlist" || segments[0] == "results") {
-		return Link{}, errors.New("YouTube playlists and searches are not supported — paste a single video link")
+	list := strings.TrimSpace(u.Query().Get("list"))
+
+	if p == "playlist" || p == "embed/videoseries" {
+		if list == "" {
+			return Link{}, errors.New("YouTube playlist link has no list id")
+		}
+		if !youtubeListPattern.MatchString(list) {
+			return Link{}, errors.New("invalid YouTube playlist id")
+		}
+		normalized := "https://www.youtube.com/playlist?list=" + list
+		return Link{Raw: raw, URL: normalized, Kind: KindYouTubePlaylist, ID: list}, nil
+	}
+	if len(segments) > 0 && segments[0] == "results" {
+		return Link{}, errors.New("YouTube searches are not supported — paste a playlist or video link")
 	}
 	if strings.HasPrefix(p, "channel/") || strings.HasPrefix(p, "c/") || strings.HasPrefix(p, "@") {
 		return Link{}, errors.New("paste a link to a specific YouTube video, not a channel")
@@ -191,6 +235,13 @@ func classifyYouTube(u *url.URL, host, raw string) (Link, error) {
 		id = u.Query().Get("v")
 	}
 	id = strings.TrimSpace(id)
+	if id == "" && list != "" {
+		if !youtubeListPattern.MatchString(list) {
+			return Link{}, errors.New("invalid YouTube playlist id")
+		}
+		normalized := "https://www.youtube.com/playlist?list=" + list
+		return Link{Raw: raw, URL: normalized, Kind: KindYouTubePlaylist, ID: list}, nil
+	}
 	if id == "" {
 		return Link{}, errors.New("could not find a video id in the YouTube link")
 	}

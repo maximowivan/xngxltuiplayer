@@ -135,6 +135,7 @@ func TestViewFrames(t *testing.T) {
 
 	for _, modal := range []modalKind{
 		modalAddLink,
+		modalPreview,
 		modalNewPlaylist,
 		modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist,
@@ -157,6 +158,18 @@ func TestViewFrames(t *testing.T) {
 		if modal == modalAddToPlaylist {
 			m.pendingTrack = m.tracks[0]
 			m.hasPending = true
+		}
+		if modal == modalPreview {
+			m.preview = &download.Preview{
+				Kind:     download.KindYouTubePlaylist,
+				Title:    "Night Drive",
+				Subtitle: "Aurora",
+				Tracks: []download.PreviewTrack{
+					{Title: "Night Drive", Artist: "Aurora", Duration: 3 * time.Minute},
+					{Title: "Sunset", Artist: "Aurora", Duration: 2 * time.Minute},
+				},
+				TotalDuration: 5 * time.Minute,
+			}
 		}
 		assertFrame(t, m, "modal")
 	}

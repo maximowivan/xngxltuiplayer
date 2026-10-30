@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"math/rand"
@@ -57,6 +58,7 @@ type modalKind int
 const (
 	modalNone modalKind = iota
 	modalAddLink
+	modalPreview
 	modalNewPlaylist
 	modalAddToPlaylist
 	modalConfirmRemoveFromPlaylist
@@ -90,6 +92,13 @@ type libraryLoadedMsg struct {
 }
 
 type libraryChangedMsg struct{}
+
+type previewLoadedMsg struct {
+	seq     int
+	raw     string
+	preview download.Preview
+	err     error
+}
 
 type artLoadedMsg struct {
 	path string
@@ -218,11 +227,15 @@ type Model struct {
 	queueIndex     int
 	shuffleHistory []int
 
-	jobs         []download.Job
-	jobSeen      map[int]download.Status
-	downloadsCur int
-	downloadsOff int
-	downloadsID  int
+	jobs           []download.Job
+	jobSeen        map[int]download.Status
+	downloadsCur   int
+	downloadsOff   int
+	downloadsID    int
+	preview        *download.Preview
+	previewSeq     int
+	previewLoading bool
+	groupNotified  map[int]bool
 
 	toast      string
 	toastKind  toastKind
@@ -262,32 +275,33 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 	}
 
 	m := &Model{
-		cfg:       cfg,
-		lib:       lib,
-		playlists: playlists,
-		stats:     statsStore,
-		engine:    engine,
-		mgr:       mgr,
-		initial:   initial,
-		width:     110,
-		height:    32,
-		loading:   true,
-		view:      view,
-		focus:     focusTracks,
-		volume:    volume,
-		repeat:    repeat,
-		shuffle:   initial.Shuffle,
-		sortMode:  sortMode,
-		theme:     applyTheme(initial.Theme),
-		jobSeen:   make(map[int]download.Status),
-		lastSave:  time.Now(),
+		cfg:           cfg,
+		lib:           lib,
+		playlists:     playlists,
+		stats:         statsStore,
+		engine:        engine,
+		mgr:           mgr,
+		initial:       initial,
+		width:         110,
+		height:        32,
+		loading:       true,
+		view:          view,
+		focus:         focusTracks,
+		volume:        volume,
+		repeat:        repeat,
+		shuffle:       initial.Shuffle,
+		sortMode:      sortMode,
+		theme:         applyTheme(initial.Theme),
+		jobSeen:       make(map[int]download.Status),
+		groupNotified: make(map[int]bool),
+		lastSave:      time.Now(),
 	}
 	m.startupNote = startupHint
 	if m.startupNote != "" {
 		m.startupUntil = time.Now().Add(15 * time.Second)
 	}
 
-	m.linkInput = newInput(currentGlyphs.Prompt, "https://open.spotify.com/track/"+currentGlyphs.Ellipsis, 4096)
+	m.linkInput = newInput(currentGlyphs.Prompt, "https://www.youtube.com/playlist?list="+currentGlyphs.Ellipsis, 4096)
 	m.nameInput = newInput(currentGlyphs.Prompt, "Playlist name", 48)
 	m.m3uInput = newInput(currentGlyphs.Prompt, "playlist.m3u8 (relative to the music folder)", 4096)
 	m.searchInput = newInput("/ ", "search title, artist, album"+currentGlyphs.Ellipsis, 120)
@@ -1681,6 +1695,52 @@ func (m *Model) deletePlaylistNow() tea.Cmd {
 	return nil
 }
 
+type downloadListItem struct {
+	header   bool
+	title    string
+	jobIndex int
+}
+
+func (m *Model) downloadListItems() []downloadListItem {
+	counts := make(map[int]int)
+	for _, job := range m.jobs {
+		if job.GroupID > 0 {
+			counts[job.GroupID]++
+		}
+	}
+	for _, job := range m.jobs {
+		if job.GroupID > 0 && job.TrackTotal > counts[job.GroupID] {
+			counts[job.GroupID] = job.TrackTotal
+		}
+	}
+	items := make([]downloadListItem, 0, len(m.jobs)+len(counts))
+	lastGroup := 0
+	for i, job := range m.jobs {
+		if job.GroupID > 0 && job.GroupID != lastGroup {
+			title := cleanText(job.GroupTitle)
+			if title == "" {
+				title = job.GroupKind.String()
+			}
+			items = append(items, downloadListItem{
+				header: true,
+				title:  fmt.Sprintf("%s  %d tracks", title, counts[job.GroupID]),
+			})
+			lastGroup = job.GroupID
+		}
+		items = append(items, downloadListItem{jobIndex: i})
+	}
+	return items
+}
+
+func (m *Model) selectedDownloadItem(items []downloadListItem) int {
+	for i, item := range items {
+		if !item.header && item.jobIndex == m.downloadsCur {
+			return i
+		}
+	}
+	return 0
+}
+
 func (m *Model) refreshJobs() {
 	m.jobs = m.mgr.Jobs()
 	if len(m.jobs) == 0 {
@@ -1716,6 +1776,9 @@ func (m *Model) resizeInputs() {
 func (m *Model) openAddLink() tea.Cmd {
 	m.modal = modalAddLink
 	m.modalErr = ""
+	m.preview = nil
+	m.previewLoading = false
+	m.previewSeq++
 	m.linkInput.SetValue("")
 	m.resizeInputs()
 	return m.linkInput.Focus()
@@ -1882,6 +1945,9 @@ func (m *Model) openHelp() {
 }
 
 func (m *Model) closeModal() {
+	m.previewSeq++
+	m.previewLoading = false
+	m.preview = nil
 	switch m.modal {
 	case modalAddLink:
 		m.linkInput.Blur()
@@ -1912,10 +1978,43 @@ func (m *Model) submitLink() tea.Cmd {
 		m.modalErr = "Paste a Spotify, SoundCloud or YouTube link first."
 		return nil
 	}
-	job, err := m.mgr.Enqueue(raw)
+	if m.previewLoading {
+		return nil
+	}
+	m.modalErr = ""
+	m.previewLoading = true
+	m.previewSeq++
+	m.linkInput.Blur()
+	seq := m.previewSeq
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		preview, err := m.mgr.Preview(ctx, raw)
+		return previewLoadedMsg{seq: seq, raw: raw, preview: preview, err: err}
+	}
+}
+
+func (m *Model) handlePreviewLoaded(msg previewLoadedMsg) tea.Cmd {
+	if msg.seq != m.previewSeq || m.modal != modalAddLink {
+		return nil
+	}
+	m.previewLoading = false
+	if msg.err != nil {
+		m.modalErr = msg.err.Error()
+		return m.linkInput.Focus()
+	}
+	if msg.preview.Batch() {
+		preview := msg.preview
+		m.preview = &preview
+		m.modal = modalPreview
+		m.modalErr = ""
+		return nil
+	}
+
+	job, err := m.mgr.Enqueue(msg.raw)
 	if err != nil {
 		m.modalErr = err.Error()
-		return nil
+		return m.linkInput.Focus()
 	}
 	m.jobSeen[job.ID] = job.Status
 	m.linkInput.Blur()
@@ -1923,6 +2022,38 @@ func (m *Model) submitLink() tea.Cmd {
 	m.modalErr = ""
 	m.refreshJobs()
 	m.downloadsCur = len(m.jobs) - 1
+	return nil
+}
+
+func (m *Model) confirmPreview() tea.Cmd {
+	if m.preview == nil {
+		return nil
+	}
+	result, err := m.mgr.EnqueuePreview(*m.preview)
+	if err != nil {
+		m.modalErr = err.Error()
+		return nil
+	}
+	m.preview = nil
+	m.linkInput.Blur()
+	m.modal = modalDownloads
+	m.modalErr = ""
+	m.refreshJobs()
+	m.downloadsCur = maxInt(0, len(m.jobs)-1)
+	for i, job := range m.jobs {
+		if job.GroupID == result.GroupID {
+			m.downloadsCur = i
+			break
+		}
+	}
+	message := fmt.Sprintf("Queued %d tracks", result.Queued)
+	if result.Duplicates > 0 {
+		message += fmt.Sprintf(", %d duplicate skipped", result.Duplicates)
+	}
+	if result.Skipped > 0 {
+		message += fmt.Sprintf(", %d skipped", result.Skipped)
+	}
+	m.setToast(message, toastSuccess, 4*time.Second)
 	return nil
 }
 
@@ -2180,6 +2311,42 @@ func (m *Model) pollDownloads() tea.Cmd {
 			continue
 		}
 		if prev == j.Status {
+			continue
+		}
+		if j.GroupID > 0 {
+			if m.groupNotified[j.GroupID] {
+				continue
+			}
+			total, terminal, failed, canceled := 0, 0, 0, 0
+			for _, groupJob := range jobs {
+				if groupJob.GroupID != j.GroupID {
+					continue
+				}
+				total++
+				if groupJob.Status.Terminal() {
+					terminal++
+				}
+				switch groupJob.Status {
+				case download.StatusFailed:
+					failed++
+				case download.StatusCanceled:
+					canceled++
+				}
+			}
+			if total == 0 || terminal != total {
+				continue
+			}
+			m.groupNotified[j.GroupID] = true
+			title := truncateText(cleanText(j.GroupTitle), 80)
+			switch {
+			case failed > 0:
+				m.setToast(fmt.Sprintf("%d of %d failed: %s", failed, total, title), toastWarning, 6*time.Second)
+			case canceled > 0:
+				m.setToast(fmt.Sprintf("Playlist stopped: %d of %d canceled", canceled, total), toastInfo, 5*time.Second)
+			default:
+				m.setToast(fmt.Sprintf("Playlist downloaded: %s (%d tracks)", title, total), toastSuccess, 5*time.Second)
+			}
+			cmds = append(cmds, m.startRefresh())
 			continue
 		}
 		switch j.Status {

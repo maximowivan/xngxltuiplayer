@@ -34,7 +34,7 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.4.2"
+var version = "0.5.0"
 
 func main() {
 	defer recoverPanic()
@@ -48,6 +48,7 @@ func main() {
 		colorMode  = flag.String("color", "auto", "color mode: auto, truecolor, 256, 16 or none")
 		watchMode  = flag.String("watch", "auto", "watch the music folder: auto, on or off")
 		sampleRate = flag.String("rate", "48000", "audio output rate: 48000 or 44100")
+		workers    = flag.Int("download-workers", 2, "parallel downloads (1-6)")
 		icons      = flag.String("icons", "auto", "icon mode: auto, unicode or ascii")
 		discordID  = flag.String("discord", "", "Discord application client id for Rich Presence")
 		check      = flag.Bool("check", false, "check directories, external tools and audio output, then exit")
@@ -77,6 +78,10 @@ func main() {
 		fatal(err)
 	}
 	rateValue, err := parseSampleRate(*sampleRate)
+	if err != nil {
+		fatal(err)
+	}
+	workerCount, err := parseDownloadWorkers(*workers)
 	if err != nil {
 		fatal(err)
 	}
@@ -111,7 +116,7 @@ func main() {
 	}
 
 	if *check {
-		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII, watchValue, rateValue)
+		ok := runCheck(cfg, tools, presenceCfg, termInfo, glyphMode, colorProfile, iconASCII, watchValue, rateValue, workerCount)
 		applog.Close()
 		if !ok {
 			os.Exit(1)
@@ -168,6 +173,7 @@ func main() {
 		TempDir:     cfg.TempDir,
 		Tools:       tools,
 		CookiesFile: filepath.Join(cfg.DataDir, "cookies.txt"),
+		Workers:     workerCount,
 	})
 
 	var rpc *presence.Client
@@ -287,6 +293,13 @@ func parseSampleRate(value string) (int, error) {
 	default:
 		return 0, fmt.Errorf("invalid -rate value %q: expected 48000 or 44100", value)
 	}
+}
+
+func parseDownloadWorkers(value int) (int, error) {
+	if value < 1 || value > 6 {
+		return 0, fmt.Errorf("invalid -download-workers value %d: expected 1-6", value)
+	}
+	return value, nil
 }
 
 func resolveGlyphMode(value string, info terminal.Info) ui.GlyphMode {
@@ -434,7 +447,7 @@ func runUpdate(cfg config.Config) {
 	applog.Close()
 }
 
-func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool, watchMode string, sampleRate int) bool {
+func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Config, termInfo terminal.Info, glyphMode ui.GlyphMode, colorProfile ui.ColorProfile, iconASCII bool, watchMode string, sampleRate, downloadWorkers int) bool {
 	ok := true
 	fmt.Printf("%s %s\n\n", appName, version)
 
@@ -538,6 +551,7 @@ func runCheck(cfg config.Config, tools download.Tools, presenceCfg presence.Conf
 	} else {
 		fmt.Println("  no cookies.txt (only needed for restricted sources)")
 	}
+	fmt.Printf("  downloads    %d parallel workers\n", downloadWorkers)
 	fmt.Printf("  log          %s\n", applog.Describe())
 
 	fmt.Println()

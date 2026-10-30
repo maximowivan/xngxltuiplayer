@@ -97,6 +97,19 @@ func TestParseSampleRate(t *testing.T) {
 	}
 }
 
+func TestParseDownloadWorkers(t *testing.T) {
+	for _, value := range []int{1, 2, 6} {
+		if got, err := parseDownloadWorkers(value); err != nil || got != value {
+			t.Fatalf("parseDownloadWorkers(%d) = %d, %v", value, got, err)
+		}
+	}
+	for _, value := range []int{0, -1, 7} {
+		if _, err := parseDownloadWorkers(value); err == nil {
+			t.Fatalf("parseDownloadWorkers(%d) should fail", value)
+		}
+	}
+}
+
 func TestResolveGlyphAndIconModes(t *testing.T) {
 	info := terminal.Info{Glyphs: terminal.GlyphsCompat, Unicode: false}
 	if got := resolveGlyphMode("auto", info); got != ui.GlyphsCompat {

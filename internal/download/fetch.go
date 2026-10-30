@@ -38,15 +38,27 @@ func (m *Manager) fetchInfo(ctx context.Context, target string, flat bool) (*ytI
 	args = append(args, m.cookieArgs()...)
 	args = append(args, target)
 
-	cmd := exec.CommandContext(ctx, m.tools.YtDlp, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	var out []byte
+	var err error
+	if m.runJSON != nil {
+		out, err = m.runJSON(ctx, args)
+	} else {
+		cmd := exec.CommandContext(ctx, m.tools.YtDlp, args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err = cmd.Output()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, toolError("yt-dlp", stderr.String(), err)
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, toolError("yt-dlp", stderr.String(), err)
+		return nil, err
 	}
 	var info ytInfo
 	if err := json.Unmarshal(out, &info); err != nil {

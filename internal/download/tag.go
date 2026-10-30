@@ -2,6 +2,7 @@ package download
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/bogem/id3v2/v2"
@@ -29,6 +30,12 @@ func writeTags(path string, meta Meta, coverJPEG []byte) error {
 	}
 	if year := strings.TrimSpace(meta.Year); year != "" {
 		tag.SetYear(year)
+	}
+	if meta.TrackNumber > 0 {
+		tag.AddTextFrame("TRCK", id3v2.EncodingUTF8, strconv.Itoa(meta.TrackNumber))
+	}
+	if meta.DiscNumber > 0 {
+		tag.AddTextFrame("TPOS", id3v2.EncodingUTF8, strconv.Itoa(meta.DiscNumber))
 	}
 	if source := strings.TrimSpace(meta.SourceURL); source != "" {
 		tag.AddCommentFrame(id3v2.CommentFrame{

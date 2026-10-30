@@ -23,7 +23,7 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 	sizes := [][2]int{{130, 40}, {110, 32}, {92, 28}, {84, 24}, {60, 18}}
 	modes := []GlyphMode{GlyphsFull, GlyphsCompat, GlyphsASCII}
 	modals := []modalKind{
-		modalNone, modalAddLink, modalNewPlaylist, modalAddToPlaylist,
+		modalNone, modalAddLink, modalPreview, modalNewPlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
 		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates, modalThemes, modalUpdate,
@@ -83,6 +83,16 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 						Path:    h,
 					}}
 					m.downloadsCur = 0
+					m.preview = &download.Preview{
+						Kind:     download.KindSoundCloudSet,
+						Title:    h,
+						Subtitle: h,
+						Tracks: []download.PreviewTrack{
+							{Title: h, Artist: h, Duration: time.Minute},
+						},
+						TotalDuration: time.Minute,
+						Skipped:       1,
+					}
 					m.linkInput.SetValue(h)
 					m.nameInput.SetValue(h)
 					m.m3uInput.SetValue(h)
