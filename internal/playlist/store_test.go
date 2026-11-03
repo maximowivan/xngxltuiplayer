@@ -3,6 +3,7 @@ package playlist
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,6 +181,77 @@ func TestReservedPlaylistNames(t *testing.T) {
 	}
 	if _, err := store.Create("@favorites"); err == nil {
 		t.Fatal("names starting with @ should be reserved")
+	}
+}
+
+func TestRenamePlaylist(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create("Mix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("Focus"); err != nil {
+		t.Fatal(err)
+	}
+	track := filepath.Join(dir, "a.mp3")
+	if _, err := store.Add("Mix", track); err != nil {
+		t.Fatal(err)
+	}
+
+	renamed, err := store.Rename("mix", "Road Trip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Name != "Road Trip" || len(renamed.Tracks) != 1 || renamed.Tracks[0] != track {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	if !renamed.Created.Equal(created.Created) {
+		t.Fatalf("created changed: %v -> %v", created.Created, renamed.Created)
+	}
+	if store.Has("Mix") {
+		t.Fatal("old name still exists")
+	}
+	names := store.Names()
+	if len(names) != 2 || names[0] != "Road Trip" || names[1] != "Focus" {
+		t.Fatalf("names = %v", names)
+	}
+
+	if _, err := store.Rename("ROAD TRIP", "road trip"); err != nil {
+		t.Fatalf("case-only rename: %v", err)
+	}
+	if !store.Has("road trip") {
+		t.Fatal("case-only rename did not apply")
+	}
+	if _, err := store.Rename("road trip", "road trip"); err != nil {
+		t.Fatalf("same-name rename: %v", err)
+	}
+
+	if _, err := store.Rename("road trip", "focus"); err == nil {
+		t.Fatal("rename to an existing name should fail")
+	}
+	if _, err := store.Rename("road trip", "FOCUS"); err == nil {
+		t.Fatal("rename to an existing name ignoring case should fail")
+	}
+	for _, invalid := range []string{"", "  ", "@reserved", strings.Repeat("x", 49), "bad\tname"} {
+		if _, err := store.Rename("road trip", invalid); err == nil {
+			t.Fatalf("rename to %q should fail", invalid)
+		}
+	}
+	if _, err := store.Rename("missing", "New name"); err == nil {
+		t.Fatal("renaming a missing playlist should fail")
+	}
+
+	reloaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, ok := reloaded.Get("road trip")
+	if !ok || len(pl.Tracks) != 1 || pl.Tracks[0] != track {
+		t.Fatalf("persisted playlist = %+v, ok=%v", pl, ok)
 	}
 }
 

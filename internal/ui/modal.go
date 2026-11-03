@@ -28,6 +28,8 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderEQModal(w, contentH)
 	case modalNewPlaylist:
 		return m.renderNewPlaylistModal(w, contentH)
+	case modalRenamePlaylist:
+		return m.renderRenamePlaylistModal(w, contentH)
 	case modalAddToPlaylist:
 		return m.renderAddToPlaylistModal(w, contentH)
 	case modalConfirmRemoveFromPlaylist:
@@ -383,6 +385,25 @@ func (m *Model) renderNewPlaylistModal(w, contentH int) string {
 		lines = append(lines, dimStyle.Render("Up to 48 characters. Names are case-insensitive."))
 	}
 	return renderBox("New playlist", lines, width, height, colAccent, colAccent)
+}
+
+func (m *Model) renderRenamePlaylistModal(w, contentH int) string {
+	width := modalWidth(w)
+	innerW := width - 4
+	height := modalHeight(contentH, 9)
+
+	lines := []string{
+		textStyle.Render(truncateText("Rename \""+cleanText(m.renamePlaylist)+"\". Tracks stay in the playlist.", innerW)),
+		"",
+		fitLine(m.nameInput.View(), innerW),
+		"",
+	}
+	if m.modalErr != "" {
+		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
+	} else {
+		lines = append(lines, dimStyle.Render("Up to 48 characters. Names are case-insensitive."))
+	}
+	return renderBox("Rename playlist", lines, width, height, colAccent, colAccent)
 }
 
 func (m *Model) renderAddToPlaylistModal(w, contentH int) string {

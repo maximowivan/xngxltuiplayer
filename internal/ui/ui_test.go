@@ -138,6 +138,7 @@ func TestViewFrames(t *testing.T) {
 		modalPreview,
 		modalEQ,
 		modalNewPlaylist,
+		modalRenamePlaylist,
 		modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist,
 		modalConfirmDeleteTrack,

@@ -34,7 +34,7 @@ const appName = "xngxltuiplayer"
 // version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.7.2"
+var version = "0.7.3"
 
 func main() {
 	defer recoverPanic()

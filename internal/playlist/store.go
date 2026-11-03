@@ -122,17 +122,8 @@ func (s *Store) Has(name string) bool {
 // Create adds a new empty playlist.
 func (s *Store) Create(name string) (Playlist, error) {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return Playlist{}, errors.New("playlist name cannot be empty")
-	}
-	if utf8.RuneCountInString(name) > 48 {
-		return Playlist{}, errors.New("playlist name is too long (max 48 characters)")
-	}
-	if strings.ContainsAny(name, "\r\n\t") {
-		return Playlist{}, errors.New("playlist name contains invalid characters")
-	}
-	if strings.HasPrefix(name, "@") {
-		return Playlist{}, errors.New("playlist names starting with @ are reserved")
+	if err := validateName(name); err != nil {
+		return Playlist{}, err
 	}
 
 	s.mu.Lock()
@@ -149,6 +140,64 @@ func (s *Store) Create(name string) (Playlist, error) {
 		return Playlist{}, err
 	}
 	return p.Clone(), nil
+}
+
+// Rename changes a playlist name while keeping its tracks and creation time.
+// Names are matched case-insensitively; a change of case alone is allowed.
+func (s *Store) Rename(oldName, newName string) (Playlist, error) {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" {
+		return Playlist{}, errors.New("playlist not found")
+	}
+	if err := validateName(newName); err != nil {
+		return Playlist{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := -1
+	for i, p := range s.items {
+		if strings.EqualFold(p.Name, oldName) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return Playlist{}, fmt.Errorf("playlist %q not found", oldName)
+	}
+	for i, p := range s.items {
+		if i != idx && strings.EqualFold(p.Name, newName) {
+			return Playlist{}, fmt.Errorf("playlist %q already exists", newName)
+		}
+	}
+	if s.items[idx].Name == newName {
+		return s.items[idx].Clone(), nil
+	}
+
+	previous := s.items[idx].Name
+	s.items[idx].Name = newName
+	if err := s.saveLocked(); err != nil {
+		s.items[idx].Name = previous
+		return Playlist{}, err
+	}
+	return s.items[idx].Clone(), nil
+}
+
+func validateName(name string) error {
+	if name == "" {
+		return errors.New("playlist name cannot be empty")
+	}
+	if utf8.RuneCountInString(name) > 48 {
+		return errors.New("playlist name is too long (max 48 characters)")
+	}
+	if strings.ContainsAny(name, "\r\n\t") {
+		return errors.New("playlist name contains invalid characters")
+	}
+	if strings.HasPrefix(name, "@") {
+		return errors.New("playlist names starting with @ are reserved")
+	}
+	return nil
 }
 
 // Delete removes a playlist by name.

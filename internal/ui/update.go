@@ -268,6 +268,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openUpdatePrompt()
 		}
 		return m, nil
+	case "R", "f2":
+		if m.focus == focusSidebar {
+			return m, m.openRenamePlaylist()
+		}
+		m.setToast("Select a playlist in the sidebar first", toastInfo, 2*time.Second)
+		return m, nil
 	case "D":
 		if m.focus == focusSidebar && m.sidebarCursor > 2 {
 			m.openDeletePlaylist()
@@ -494,6 +500,18 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m, m.submitPlaylistName()
+		}
+		var cmd tea.Cmd
+		m.nameInput, cmd = m.nameInput.Update(msg)
+		return m, cmd
+
+	case modalRenamePlaylist:
+		switch key {
+		case "esc":
+			m.closeModal()
+			return m, nil
+		case "enter":
+			return m, m.submitPlaylistRename()
 		}
 		var cmd tea.Cmd
 		m.nameInput, cmd = m.nameInput.Update(msg)

@@ -61,6 +61,7 @@ const (
 	modalPreview
 	modalEQ
 	modalNewPlaylist
+	modalRenamePlaylist
 	modalAddToPlaylist
 	modalConfirmRemoveFromPlaylist
 	modalConfirmDeleteTrack
@@ -222,6 +223,7 @@ type Model struct {
 	hasPending      bool
 	deleteTracks    []model.Track
 	deletePlaylist  string
+	renamePlaylist  string
 
 	selection map[string]bool
 
@@ -1933,6 +1935,24 @@ func (m *Model) openNewPlaylist() tea.Cmd {
 	return m.nameInput.Focus()
 }
 
+func (m *Model) openRenamePlaylist() tea.Cmd {
+	if m.sidebarCursor <= 2 {
+		m.setToast("Select a playlist first", toastInfo, 2*time.Second)
+		return nil
+	}
+	names := m.playlists.Names()
+	if m.sidebarCursor-3 >= len(names) {
+		return nil
+	}
+	m.renamePlaylist = names[m.sidebarCursor-3]
+	m.modal = modalRenamePlaylist
+	m.modalErr = ""
+	m.nameInput.SetValue(m.renamePlaylist)
+	m.nameInput.CursorEnd()
+	m.resizeInputs()
+	return m.nameInput.Focus()
+}
+
 func (m *Model) openImportM3U() tea.Cmd {
 	m.modal = modalImportM3U
 	m.modalErr = ""
@@ -2099,7 +2119,7 @@ func (m *Model) closeModal() {
 	switch m.modal {
 	case modalAddLink:
 		m.linkInput.Blur()
-	case modalNewPlaylist:
+	case modalNewPlaylist, modalRenamePlaylist:
 		m.nameInput.Blur()
 	case modalImportM3U, modalExportM3U:
 		m.m3uInput.Blur()
@@ -2118,6 +2138,7 @@ func (m *Model) closeModal() {
 	m.pendingPaths = nil
 	m.deleteTracks = nil
 	m.deletePlaylist = ""
+	m.renamePlaylist = ""
 }
 
 func (m *Model) submitLink() tea.Cmd {
@@ -2518,6 +2539,37 @@ func (m *Model) submitPlaylistName() tea.Cmd {
 	m.closeModal()
 	m.setToast("Playlist \""+name+"\" created", toastSuccess, 3*time.Second)
 	m.markDirty()
+	return nil
+}
+
+func (m *Model) submitPlaylistRename() tea.Cmd {
+	oldName := m.renamePlaylist
+	if oldName == "" {
+		m.closeModal()
+		return nil
+	}
+	newName := strings.TrimSpace(m.nameInput.Value())
+	if newName == "" {
+		m.modalErr = "Enter a playlist name."
+		return nil
+	}
+	renamed, err := m.playlists.Rename(oldName, newName)
+	if err != nil {
+		m.modalErr = err.Error()
+		return nil
+	}
+	wasActive := strings.EqualFold(m.view, oldName)
+	m.nameInput.Blur()
+	m.closeModal()
+	if wasActive {
+		m.view = renamed.Name
+	}
+	m.markDirty()
+	if renamed.Name == oldName {
+		m.setToast("Playlist name is unchanged", toastInfo, 2*time.Second)
+		return nil
+	}
+	m.setToast("Playlist renamed to \""+renamed.Name+"\"", toastSuccess, 3*time.Second)
 	return nil
 }
 

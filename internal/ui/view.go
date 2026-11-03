@@ -988,6 +988,7 @@ func (m *Model) renderHints() string {
 				keyHint("enter", "open"),
 				keyHint("tab", "tracks"),
 				keyHint("P", "new"),
+				keyHint("R", "rename"),
 				keyHint("D", "delete"),
 				keyHint("a", "search / add"),
 				keyHint("?", "help"),
