@@ -65,17 +65,21 @@ func modalHeight(contentH, desired int) int {
 func (m *Model) renderAddLinkModal(w, contentH int) string {
 	width := modalWidth(w)
 	innerW := width - 4
-	visible := minInt(8, len(m.linkResults))
-	if visible > 0 && contentH-10 < visible {
-		visible = maxInt(1, contentH-10)
+	visible := m.searchResultRows(contentH)
+	extra := 0
+	if m.auditionStatus() != "" && len(m.linkResults) > 0 {
+		extra = 1
 	}
-	height := modalHeight(contentH, 10+visible)
+	height := modalHeight(contentH, 10+visible+extra)
 
 	source := m.linkSource.String()
 	header := accent2Style.Render(source) + faintStyle.Render("   Tab to switch source")
 	if len(m.linkResults) > 0 {
-		header = accent2Style.Render(source) + dimStyle.Render(fmt.Sprintf("   %d results", len(m.linkResults))) +
-			faintStyle.Render("   Tab source")
+		header = accent2Style.Render(source) + dimStyle.Render(fmt.Sprintf("   %d results", len(m.linkResults)))
+		if selected := m.selectedSearchCount(); selected > 0 {
+			header += accent2Style.Render(fmt.Sprintf("   %d selected", selected))
+		}
+		header += faintStyle.Render("   Tab source")
 	}
 	lines := []string{
 		textStyle.Render(truncateText("Paste a link, or type a name to search for music.", innerW)),
@@ -103,10 +107,7 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 	case m.modalErr != "":
 		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
 	case len(m.linkResults) > 0:
-		start := 0
-		if m.linkCursor >= visible {
-			start = m.linkCursor - visible + 1
-		}
+		start := m.searchResultStart(visible)
 		end := minInt(len(m.linkResults), start+visible)
 		for i := start; i < end; i++ {
 			result := m.linkResults[i]
@@ -114,14 +115,30 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 			if artist := cleanText(result.Artist); artist != "" {
 				label = artist + " " + currentGlyphs.Dash + " " + label
 			}
-			left := fmt.Sprintf("%2d. %s", i+1, label)
+			check := "[ ] "
+			if m.linkSelected[result.URL] {
+				check = "[x] "
+			}
+			left := fmt.Sprintf("%s%2d. %s", check, i+1, label)
 			right := model.FormatDuration(result.Duration)
 			row := padBetween(left, right, innerW)
-			if i == m.linkCursor {
+			switch {
+			case i == m.linkCursor:
 				lines = append(lines, selectedStyle.Render(row))
-			} else {
+			case m.linkSelected[result.URL]:
+				lines = append(lines, accent2Style.Render(row))
+			default:
 				lines = append(lines, textStyle.Render(row))
 			}
+		}
+		if status := m.auditionStatus(); status != "" {
+			style := accent2Style
+			if m.auditionErr != "" {
+				style = errorStyle
+			} else if m.auditionLoading {
+				style = warningStyle
+			}
+			lines = append(lines, style.Render(truncateText(status, innerW)))
 		}
 	default:
 		lines = append(lines, dimStyle.Render("Enter searches "+source+"; pasted links still work."))

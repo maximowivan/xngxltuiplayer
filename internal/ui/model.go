@@ -109,6 +109,14 @@ type searchLoadedMsg struct {
 	err     error
 }
 
+type auditionReadyMsg struct {
+	seq      int
+	result   download.SearchResult
+	path     string
+	duration time.Duration
+	err      error
+}
+
 type artLoadedMsg struct {
 	path string
 	img  image.Image
@@ -181,31 +189,39 @@ type Model struct {
 	searchInput textinput.Model
 	searching   bool
 
-	modal          modalKind
-	linkInput      textinput.Model
-	linkSource     download.SearchSource
-	linkResults    []download.SearchResult
-	linkCursor     int
-	linkQuery      string
-	linkLoading    bool
-	linkErr        string
-	linkSeq        int
-	nameInput      textinput.Model
-	m3uInput       textinput.Model
-	modalCursor    int
-	modalErr       string
-	tags           *tagEditor
-	dupGroups      []library.DuplicateGroup
-	dupGroup       int
-	dupKeeper      int
-	dupOffset      int
-	dupLoading     bool
-	dupMerging     bool
-	pendingTrack   model.Track
-	pendingPaths   []string
-	hasPending     bool
-	deleteTracks   []model.Track
-	deletePlaylist string
+	modal           modalKind
+	linkInput       textinput.Model
+	linkSource      download.SearchSource
+	linkResults     []download.SearchResult
+	linkCursor      int
+	linkQuery       string
+	linkLoading     bool
+	linkErr         string
+	linkSeq         int
+	linkSelected    map[string]bool
+	auditionActive  bool
+	auditionLoading bool
+	auditionResult  download.SearchResult
+	auditionPos     time.Duration
+	auditionLength  time.Duration
+	auditionSeq     int
+	auditionErr     string
+	nameInput       textinput.Model
+	m3uInput        textinput.Model
+	modalCursor     int
+	modalErr        string
+	tags            *tagEditor
+	dupGroups       []library.DuplicateGroup
+	dupGroup        int
+	dupKeeper       int
+	dupOffset       int
+	dupLoading      bool
+	dupMerging      bool
+	pendingTrack    model.Track
+	pendingPaths    []string
+	hasPending      bool
+	deleteTracks    []model.Track
+	deletePlaylist  string
 
 	selection map[string]bool
 
@@ -317,6 +333,7 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 		theme:         applyTheme(initial.Theme),
 		jobSeen:       make(map[int]download.Status),
 		groupNotified: make(map[int]bool),
+		linkSelected:  make(map[string]bool),
 		lastSave:      time.Now(),
 	}
 	m.startupNote = startupHint
@@ -1901,6 +1918,8 @@ func (m *Model) openAddLink() tea.Cmd {
 	m.linkLoading = false
 	m.linkErr = ""
 	m.linkSeq++
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	m.linkInput.SetValue("")
 	m.resizeInputs()
 	return m.linkInput.Focus()
@@ -2075,6 +2094,8 @@ func (m *Model) closeModal() {
 	m.linkResults = nil
 	m.linkCursor = 0
 	m.linkErr = ""
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	switch m.modal {
 	case modalAddLink:
 		m.linkInput.Blur()
@@ -2139,6 +2160,8 @@ func (m *Model) startLinkSearch(raw string) tea.Cmd {
 	if raw == "" {
 		return nil
 	}
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	m.linkLoading = true
 	m.linkErr = ""
 	m.modalErr = ""
@@ -2161,6 +2184,8 @@ func (m *Model) handleSearchLoaded(msg searchLoadedMsg) tea.Cmd {
 	if msg.seq != m.linkSeq || m.modal != modalAddLink {
 		return nil
 	}
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	m.linkLoading = false
 	if msg.err != nil {
 		m.linkErr = msg.err.Error()
@@ -2177,38 +2202,205 @@ func (m *Model) handleSearchLoaded(msg searchLoadedMsg) tea.Cmd {
 }
 
 func (m *Model) enqueueSearchResult() tea.Cmd {
-	if m.linkCursor < 0 || m.linkCursor >= len(m.linkResults) {
-		return nil
+	selected := m.selectedSearchResults()
+	if len(selected) == 0 {
+		if m.linkCursor < 0 || m.linkCursor >= len(m.linkResults) {
+			return nil
+		}
+		selected = []download.SearchResult{m.linkResults[m.linkCursor]}
 	}
-	result := m.linkResults[m.linkCursor]
-	job, err := m.mgr.EnqueueResult(result)
-	if err != nil {
-		m.linkErr = err.Error()
-		return m.linkInput.Focus()
-	}
-	m.jobSeen[job.ID] = job.Status
+	m.stopAudition()
 	m.linkInput.Blur()
-	m.modal = modalDownloads
 	m.modalErr = ""
+	groupID := 0
+	if len(selected) == 1 && m.selectedSearchCount() == 0 {
+		result := selected[0]
+		job, err := m.mgr.EnqueueResult(result)
+		if err != nil {
+			m.linkErr = err.Error()
+			return m.linkInput.Focus()
+		}
+		m.jobSeen[job.ID] = job.Status
+		m.setToast("Downloading: "+cleanText(result.Title), toastSuccess, 3*time.Second)
+	} else {
+		groupTitle := "Search: " + cleanText(m.linkQuery)
+		batch, err := m.mgr.EnqueueResults(selected, groupTitle)
+		if err != nil {
+			m.linkErr = err.Error()
+			return m.linkInput.Focus()
+		}
+		m.setToast(fmt.Sprintf("Queued %d tracks", batch.Queued), toastSuccess, 3*time.Second)
+		groupID = batch.GroupID
+	}
+	m.modal = modalDownloads
 	m.linkResults = nil
 	m.linkErr = ""
+	m.linkSelected = make(map[string]bool)
 	m.refreshJobs()
 	m.downloadsCur = maxInt(0, len(m.jobs)-1)
-	m.setToast("Downloading: "+cleanText(result.Title), toastSuccess, 3*time.Second)
+	if groupID != 0 {
+		for i, job := range m.jobs {
+			if job.GroupID == groupID {
+				m.downloadsCur = i
+				break
+			}
+		}
+	}
 	return nil
 }
 
 func (m *Model) clearLinkResults() {
 	m.linkSeq++
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	m.linkLoading = false
 	m.linkResults = nil
 	m.linkCursor = 0
 	m.linkErr = ""
 }
 
+func (m *Model) selectedSearchResults() []download.SearchResult {
+	if len(m.linkSelected) == 0 {
+		return nil
+	}
+	out := make([]download.SearchResult, 0, len(m.linkSelected))
+	for _, result := range m.linkResults {
+		if m.linkSelected[result.URL] {
+			out = append(out, result)
+		}
+	}
+	return out
+}
+
+func (m *Model) selectedSearchCount() int {
+	n := 0
+	for _, result := range m.linkResults {
+		if m.linkSelected[result.URL] {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Model) toggleSearchSelection() {
+	if m.linkCursor < 0 || m.linkCursor >= len(m.linkResults) {
+		return
+	}
+	if m.linkSelected == nil {
+		m.linkSelected = make(map[string]bool)
+	}
+	url := m.linkResults[m.linkCursor].URL
+	if m.linkSelected[url] {
+		delete(m.linkSelected, url)
+	} else {
+		m.linkSelected[url] = true
+	}
+}
+
+func (m *Model) selectAllSearch() {
+	if m.linkSelected == nil {
+		m.linkSelected = make(map[string]bool)
+	}
+	for _, result := range m.linkResults {
+		m.linkSelected[result.URL] = true
+	}
+}
+
+func (m *Model) toggleAudition() tea.Cmd {
+	if m.auditionLoading || m.auditionActive {
+		m.stopAudition()
+		return nil
+	}
+	if m.linkCursor < 0 || m.linkCursor >= len(m.linkResults) {
+		return nil
+	}
+	result := m.linkResults[m.linkCursor]
+	m.auditionSeq++
+	seq := m.auditionSeq
+	m.auditionLoading = true
+	m.auditionErr = ""
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		path, duration, err := m.mgr.PreparePreview(ctx, result)
+		return auditionReadyMsg{seq: seq, result: result, path: path, duration: duration, err: err}
+	}
+}
+
+func (m *Model) handleAuditionReady(msg auditionReadyMsg) tea.Cmd {
+	if msg.seq != m.auditionSeq || m.modal != modalAddLink {
+		return nil
+	}
+	m.auditionLoading = false
+	if msg.err != nil {
+		m.auditionErr = msg.err.Error()
+		return nil
+	}
+	if err := m.engine.PlayPreview(msg.path, msg.duration); err != nil {
+		m.auditionErr = "Preview failed: " + err.Error()
+		return nil
+	}
+	m.auditionActive = true
+	m.auditionResult = msg.result
+	m.auditionLength = msg.duration
+	m.auditionPos = 0
+	return nil
+}
+
+func (m *Model) stopAudition() {
+	m.auditionSeq++
+	if m.auditionActive {
+		m.engine.StopPreview()
+	}
+	m.auditionActive = false
+	m.auditionLoading = false
+	m.auditionPos = 0
+	m.auditionLength = 0
+	m.auditionErr = ""
+}
+
+func (m *Model) auditionStatus() string {
+	switch {
+	case m.auditionLoading:
+		frames := currentGlyphs.Spinner
+		if len(frames) == 0 {
+			frames = []rune("|/-\\")
+		}
+		return fmt.Sprintf("%c Preparing preview%s", frames[m.spinner%len(frames)], currentGlyphs.Ellipsis)
+	case m.auditionActive:
+		return fmt.Sprintf("Preview %s / %s %s Space stop",
+			model.FormatDuration(m.auditionPos), model.FormatDuration(m.auditionLength), currentGlyphs.Separator)
+	case m.auditionErr != "":
+		return "Preview: " + cleanText(m.auditionErr)
+	default:
+		return ""
+	}
+}
+
+func (m *Model) searchResultRows(contentH int) int {
+	visible := minInt(8, len(m.linkResults))
+	extra := 0
+	if m.auditionStatus() != "" && len(m.linkResults) > 0 {
+		extra = 1
+	}
+	if visible > 0 && contentH-10-extra < visible {
+		visible = maxInt(1, contentH-10-extra)
+	}
+	return visible
+}
+
+func (m *Model) searchResultStart(rows int) int {
+	if rows <= 0 || m.linkCursor < rows {
+		return 0
+	}
+	return m.linkCursor - rows + 1
+}
+
 func (m *Model) toggleLinkSource() tea.Cmd {
 	wasLoading := m.linkLoading
 	hadResults := len(m.linkResults) > 0
+	m.stopAudition()
+	m.linkSelected = make(map[string]bool)
 	m.linkSeq++
 	m.linkSource = m.linkSource.Next()
 	m.linkLoading = false
@@ -2692,9 +2884,26 @@ func (m *Model) handleTick() tea.Cmd {
 		m.spectrum = nil
 	}
 
+	if m.auditionActive {
+		if m.engine.PreviewActive() {
+			m.auditionPos = m.engine.PreviewPosition()
+			if d := m.engine.PreviewDuration(); d > 0 {
+				m.auditionLength = d
+			}
+		} else {
+			m.stopAudition()
+		}
+	}
+
 	for {
 		select {
 		case ev := <-m.engine.Events():
+			if ev.Kind == audio.EventPreviewDone {
+				if m.auditionActive {
+					m.stopAudition()
+				}
+				continue
+			}
 			if ev.Gen != m.engineGen || m.current == nil {
 				continue
 			}

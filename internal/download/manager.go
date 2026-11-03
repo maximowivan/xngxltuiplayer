@@ -148,6 +148,7 @@ func NewManager(opts Options) *Manager {
 	}
 	_ = os.MkdirAll(opts.MusicDir, 0o755)
 	_ = os.MkdirAll(opts.TempDir, 0o755)
+	m.cleanPreviewCache()
 	m.cleanOldTemp()
 	m.wg.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -190,6 +191,7 @@ func (m *Manager) Close() {
 	case <-done:
 	case <-time.After(2500 * time.Millisecond):
 	}
+	m.removePreviewCache()
 }
 
 func (m *Manager) checkTools(needsYtDlp bool) error {

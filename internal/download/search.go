@@ -154,11 +154,19 @@ func searchEntryURL(source SearchSource, entry ytInfo) string {
 // The result metadata is used as a seed, so the pipeline does not have to
 // resolve the track a second time.
 func (m *Manager) EnqueueResult(result SearchResult) (Job, error) {
+	link, err := linkFromSearchResult(result)
+	if err != nil {
+		return Job{}, err
+	}
+	return m.enqueueLink(link)
+}
+
+func linkFromSearchResult(result SearchResult) (Link, error) {
 	if strings.TrimSpace(result.URL) == "" {
-		return Job{}, errors.New("search result has no URL")
+		return Link{}, errors.New("search result has no URL")
 	}
 	if result.Kind != KindYouTube && result.Kind != KindSoundCloud {
-		return Job{}, errors.New("search result has an unsupported source")
+		return Link{}, errors.New("search result has an unsupported source")
 	}
 	meta := Meta{
 		Title:       cleanText(result.Title),
@@ -168,11 +176,106 @@ func (m *Manager) EnqueueResult(result SearchResult) (Job, error) {
 		SourceURL:   result.URL,
 		DownloadURL: result.URL,
 	}
-	return m.enqueueLink(Link{
+	return Link{
 		Raw:  result.URL,
 		URL:  result.URL,
 		Kind: result.Kind,
 		ID:   trackIDFromURL(result.URL),
 		Seed: &meta,
-	})
+	}, nil
+}
+
+// EnqueueResults adds several selected search results as one group. Duplicate
+// URLs are skipped, preserving the order of the result list.
+func (m *Manager) EnqueueResults(results []SearchResult, groupTitle string) (BatchResult, error) {
+	if len(results) == 0 {
+		return BatchResult{}, errors.New("no tracks selected")
+	}
+	if err := m.checkTools(true); err != nil {
+		return BatchResult{}, err
+	}
+
+	type item struct {
+		link Link
+	}
+	items := make([]item, 0, len(results))
+	seen := make(map[string]bool, len(results))
+	result := BatchResult{}
+	for _, searchResult := range results {
+		url := strings.TrimSpace(searchResult.URL)
+		if url == "" {
+			result.Skipped++
+			continue
+		}
+		if seen[url] {
+			result.Duplicates++
+			continue
+		}
+		link, err := linkFromSearchResult(searchResult)
+		if err != nil {
+			result.Skipped++
+			continue
+		}
+		seen[url] = true
+		items = append(items, item{link: link})
+	}
+	if len(items) == 0 {
+		return BatchResult{}, errors.New("all selected results were skipped")
+	}
+	if strings.TrimSpace(groupTitle) == "" {
+		groupTitle = "Search results"
+	}
+
+	m.mu.Lock()
+	if m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return BatchResult{}, errors.New("downloader is shutting down")
+	}
+	m.nextGroupID++
+	groupID := m.nextGroupID
+	ids := make([]int, 0, len(items))
+	for i, it := range items {
+		m.nextID++
+		title := it.link.URL
+		artist := ""
+		if it.link.Seed != nil {
+			if s := cleanText(it.link.Seed.Title); s != "" {
+				title = s
+			}
+			artist = cleanText(it.link.Seed.Artist)
+		}
+		job := &Job{
+			ID:          m.nextID,
+			URL:         it.link.URL,
+			Kind:        it.link.Kind,
+			Title:       title,
+			Artist:      artist,
+			Stage:       "queued",
+			Detail:      "waiting for a free slot",
+			Progress:    -1,
+			Status:      StatusQueued,
+			Created:     time.Now(),
+			GroupID:     groupID,
+			GroupTitle:  groupTitle,
+			GroupKind:   KindUnknown,
+			TrackNumber: i + 1,
+			TrackTotal:  len(items),
+			link:        it.link,
+		}
+		m.jobs[job.ID] = job
+		m.order = append(m.order, job.ID)
+		ids = append(ids, job.ID)
+	}
+	m.mu.Unlock()
+
+	for _, id := range ids {
+		select {
+		case m.queue <- id:
+		case <-m.ctx.Done():
+			return BatchResult{}, errors.New("downloader is shutting down")
+		}
+	}
+	result.GroupID = groupID
+	result.Queued = len(ids)
+	return result, nil
 }

@@ -51,6 +51,8 @@ const (
 	EventDone EventKind = iota
 	// EventError is reserved for future use.
 	EventError
+	// EventPreviewDone is emitted when an audition clip reaches its end.
+	EventPreviewDone
 )
 
 // Event is sent from the audio goroutine to the UI.
@@ -77,6 +79,7 @@ type trackStream struct {
 	duration time.Duration
 
 	announce  atomic.Bool
+	finished  atomic.Bool
 	closeOnce sync.Once
 	closed    atomic.Bool
 }
@@ -98,14 +101,17 @@ type Engine struct {
 	speed       float64
 	eq          EQSettings
 
-	tracks   []*trackStream
-	active   *trackStream
-	path     string
-	duration time.Duration
-	offset   time.Duration
-	paused   bool
-	gen      uint64
-	events   chan Event
+	tracks        []*trackStream
+	active        *trackStream
+	preview       *trackStream
+	previewGen    uint64
+	previewResume bool
+	path          string
+	duration      time.Duration
+	offset        time.Duration
+	paused        bool
+	gen           uint64
+	events        chan Event
 }
 
 // New creates a player with the given volume (0..1). The audio device is
@@ -195,6 +201,7 @@ func (e *Engine) CrossfadeTo(path string, duration, start, fade time.Duration) e
 	if err := e.ensureInitLocked(); err != nil {
 		return fmt.Errorf("audio device: %w", err)
 	}
+	e.stopPreviewLocked(true)
 	if e.active == nil {
 		return errors.New("nothing is playing")
 	}
@@ -344,6 +351,7 @@ func (e *Engine) pruneLocked() {
 }
 
 func (e *Engine) stopLocked() {
+	e.stopPreviewLocked(false)
 	e.gen++
 	speaker.Clear()
 	for _, ts := range e.tracks {
@@ -362,6 +370,138 @@ func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.stopLocked()
+}
+
+// PlayPreview plays a short audition clip while keeping the current track
+// paused at its position. The current track resumes after StopPreview or when
+// the clip ends.
+func (e *Engine) PlayPreview(path string, duration time.Duration) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.ensureInitLocked(); err != nil {
+		return fmt.Errorf("audio device: %w", err)
+	}
+	e.stopPreviewLocked(false)
+	ts, err := e.newPreviewTrackLocked(path, duration)
+	if err != nil {
+		return err
+	}
+	e.previewGen++
+	ts.gen = e.previewGen
+	e.previewResume = e.active != nil && !e.paused
+
+	speaker.Lock()
+	for _, track := range e.tracks {
+		track.ctrl.Paused = true
+	}
+	speaker.Unlock()
+
+	e.preview = ts
+	speaker.Play(beep.Seq(ts.ctrl, beep.Callback(func() {
+		e.finishPreview(ts)
+	})))
+	return nil
+}
+
+// StopPreview stops an audition clip and resumes the previous track if it was
+// playing before the preview.
+func (e *Engine) StopPreview() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.stopPreviewLocked(true)
+}
+
+func (e *Engine) stopPreviewLocked(resume bool) {
+	preview := e.preview
+	if preview == nil {
+		return
+	}
+	e.preview = nil
+	preview.finished.Store(true)
+	speaker.Lock()
+	preview.ctrl.Paused = true
+	if resume && e.previewResume {
+		for _, track := range e.tracks {
+			track.ctrl.Paused = false
+		}
+	}
+	speaker.Unlock()
+	preview.close()
+	e.previewResume = false
+}
+
+// PreviewActive reports whether an audition clip is still playing.
+func (e *Engine) PreviewActive() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.preview != nil && !e.preview.finished.Load()
+}
+
+// PreviewPosition returns the position inside the audition clip.
+func (e *Engine) PreviewPosition() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.preview == nil {
+		return 0
+	}
+	pos := e.sampleRate.D(int(e.preview.counter.n.Load()))
+	if e.preview.duration > 0 && pos > e.preview.duration {
+		pos = e.preview.duration
+	}
+	return pos
+}
+
+// PreviewDuration returns the duration of the audition clip.
+func (e *Engine) PreviewDuration() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.preview == nil {
+		return 0
+	}
+	return e.preview.duration
+}
+
+func (e *Engine) finishPreview(ts *trackStream) {
+	ts.close()
+	ts.finished.Store(true)
+	select {
+	case e.events <- Event{Kind: EventPreviewDone, Gen: ts.gen, Path: ts.path}:
+	default:
+	}
+}
+
+func (e *Engine) newPreviewTrackLocked(path string, duration time.Duration) (*trackStream, error) {
+	base, format, err := decodeFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if duration <= 0 && format.SampleRate > 0 {
+		duration = format.SampleRate.D(base.Len())
+	}
+	var streamer beep.Streamer = base
+	if format.SampleRate != e.sampleRate {
+		streamer = beep.Resample(4, format.SampleRate, e.sampleRate, base)
+	}
+	counter := &countingStreamer{Streamer: streamer}
+	tap := newSpectrumTap(counter, 4096)
+	fade := &fadeStreamer{Streamer: tap, gain: 1}
+	vol := &effects.Volume{
+		Streamer: fade,
+		Base:     2,
+		Volume:   gainToVolume(e.volume),
+		Silent:   e.volume <= 0.001,
+	}
+	ctrl := &beep.Ctrl{Streamer: vol}
+	return &trackStream{
+		base:     base,
+		counter:  counter,
+		tap:      tap,
+		fade:     fade,
+		ctrl:     ctrl,
+		vol:      vol,
+		path:     path,
+		duration: duration,
+	}, nil
 }
 
 // Close stops playback and closes the speaker.

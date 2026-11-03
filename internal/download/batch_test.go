@@ -47,6 +47,7 @@ func newBatchTestManager(t *testing.T) *Manager {
 		opts: Options{
 			MusicDir: filepath.Join(base, "music"),
 			DataDir:  filepath.Join(base, "data"),
+			TempDir:  filepath.Join(base, "tmp"),
 		},
 		tools:  Tools{YtDlp: "yt-dlp", FFmpeg: "ffmpeg"},
 		ctx:    context.Background(),

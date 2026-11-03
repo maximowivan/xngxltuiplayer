@@ -135,6 +135,37 @@ func TestEnqueueSearchResultUsesSeed(t *testing.T) {
 	}
 }
 
+func TestEnqueueResultsGroupsAndDeduplicates(t *testing.T) {
+	mgr := newBatchTestManager(t)
+	results := []SearchResult{
+		{URL: "https://www.youtube.com/watch?v=aaaaaaaaaaa", Kind: KindYouTube, Title: "One", Artist: "A"},
+		{URL: "https://www.youtube.com/watch?v=aaaaaaaaaaa", Kind: KindYouTube, Title: "One duplicate", Artist: "A"},
+		{URL: "https://soundcloud.com/a/two", Kind: KindSoundCloud, Title: "Two", Artist: "B"},
+	}
+	batch, err := mgr.EnqueueResults(results, "Search: test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Queued != 2 || batch.Duplicates != 1 || batch.GroupID == 0 {
+		t.Fatalf("batch = %+v", batch)
+	}
+	jobs := mgr.Jobs()
+	if len(jobs) != 2 {
+		t.Fatalf("jobs = %d, want 2", len(jobs))
+	}
+	for i, job := range jobs {
+		if job.GroupID != batch.GroupID || job.GroupTitle != "Search: test" {
+			t.Fatalf("job %d group = %d %q", i, job.GroupID, job.GroupTitle)
+		}
+		if job.TrackNumber != i+1 || job.TrackTotal != 2 {
+			t.Fatalf("job %d track = %d/%d", i, job.TrackNumber, job.TrackTotal)
+		}
+		if job.link.Seed == nil {
+			t.Fatalf("job %d has no seed", i)
+		}
+	}
+}
+
 func TestCleanSearchTitle(t *testing.T) {
 	cases := map[string]string{
 		"Instant Crush (Official Video) ft. Julian Casablancas": "Instant Crush ft. Julian Casablancas",

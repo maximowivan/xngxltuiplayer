@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,88 @@ func TestToggleSearchSource(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("source switch returned no command")
+	}
+}
+
+func TestSearchSelection(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.openAddLink()
+	m.linkResults = []download.SearchResult{
+		{URL: "https://a", Title: "A"},
+		{URL: "https://b", Title: "B"},
+		{URL: "https://c", Title: "C"},
+	}
+	m.linkCursor = 0
+	m.toggleSearchSelection()
+	m.linkCursor = 2
+	m.toggleSearchSelection()
+	if got := m.selectedSearchCount(); got != 2 {
+		t.Fatalf("selected = %d, want 2", got)
+	}
+	selected := m.selectedSearchResults()
+	if len(selected) != 2 || selected[0].URL != "https://a" || selected[1].URL != "https://c" {
+		t.Fatalf("selected results = %+v", selected)
+	}
+	frame := m.renderAddLinkModal(110, 32)
+	if !strings.Contains(frame, "[x]") || !strings.Contains(frame, "2 selected") {
+		t.Fatalf("selection markers missing:\n%s", frame)
+	}
+	m.selectAllSearch()
+	if got := m.selectedSearchCount(); got != 3 {
+		t.Fatalf("select all = %d, want 3", got)
+	}
+	m.clearLinkResults()
+	if got := m.selectedSearchCount(); got != 0 {
+		t.Fatalf("selection survived clear: %d", got)
+	}
+}
+
+func TestAuditionStates(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.openAddLink()
+	m.linkResults = []download.SearchResult{{URL: "https://a", Title: "A"}}
+	m.linkCursor = 0
+	cmd := m.toggleAudition()
+	if !m.auditionLoading || cmd == nil {
+		t.Fatalf("audition did not start: loading=%v cmd=%v", m.auditionLoading, cmd)
+	}
+	m.auditionSeq = 7
+	m.auditionLoading = true
+	m.handleAuditionReady(auditionReadyMsg{seq: 7, err: errors.New("no preview")})
+	if m.auditionLoading || !strings.Contains(m.auditionErr, "no preview") {
+		t.Fatalf("audition error state = %v / %q", m.auditionLoading, m.auditionErr)
+	}
+	m.auditionActive = true
+	m.auditionLength = 20 * time.Second
+	m.auditionPos = 7 * time.Second
+	frame := m.renderAddLinkModal(110, 32)
+	if !strings.Contains(frame, "Preview 0:07 / 0:20") {
+		t.Fatalf("preview status missing:\n%s", frame)
+	}
+	m.stopAudition()
+	if m.auditionActive || m.auditionLoading || m.auditionPos != 0 {
+		t.Fatalf("audition did not stop: %+v", m)
+	}
+}
+
+func TestSearchSelectedEnqueueShowsToolError(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.openAddLink()
+	m.linkResults = []download.SearchResult{
+		{URL: "https://a", Title: "A", Kind: download.KindYouTube},
+		{URL: "https://b", Title: "B", Kind: download.KindYouTube},
+	}
+	m.linkSelected["https://a"] = true
+	m.linkSelected["https://b"] = true
+	_ = m.enqueueSearchResult()
+	if m.linkErr == "" {
+		t.Fatal("missing tools did not set linkErr")
+	}
+	if m.modal != modalAddLink {
+		t.Fatalf("modal = %v, want add link", m.modal)
 	}
 }
 

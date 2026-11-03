@@ -384,6 +384,55 @@ func (m *Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.modal == modalAddLink && len(m.linkResults) > 0 {
+		w, _ := m.dims()
+		_, _, contentH, _, _, _ := m.layout()
+		width := modalWidth(w)
+		visible := m.searchResultRows(contentH)
+		extra := 0
+		if m.auditionStatus() != "" {
+			extra = 1
+		}
+		height := modalHeight(contentH, 10+visible+extra)
+		left := (w - width) / 2
+		top := (contentH - height) / 2
+		start := m.searchResultStart(visible)
+
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			m.stopAudition()
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.linkCursor--
+			} else {
+				m.linkCursor++
+			}
+			if m.linkCursor < 0 {
+				m.linkCursor = 0
+			}
+			if m.linkCursor >= len(m.linkResults) {
+				m.linkCursor = len(m.linkResults) - 1
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if msg.X < left || msg.X >= left+width {
+				return m, nil
+			}
+			row := msg.Y - (top + 7)
+			if row < 0 || row >= visible {
+				return m, nil
+			}
+			index := start + row
+			if index < 0 || index >= len(m.linkResults) {
+				return m, nil
+			}
+			m.stopAudition()
+			m.linkCursor = index
+			if msg.Ctrl {
+				m.toggleSearchSelection()
+			}
+		}
+		return m, nil
+	}
 	if m.modal != modalDownloads {
 		return m, nil
 	}

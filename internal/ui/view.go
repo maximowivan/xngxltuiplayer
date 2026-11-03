@@ -1068,7 +1068,8 @@ func (m *Model) renderModalHints(w int) string {
 	case modalAddLink:
 		if len(m.linkResults) > 0 {
 			return hintLine(
-				keyHint(currentGlyphs.UpDown, "select"),
+				keyHint("space", "preview"),
+				keyHint("ctrl+space", "select"),
 				keyHint("enter", "download"),
 				keyHint("tab", "source"),
 				keyHint("esc", "back"),

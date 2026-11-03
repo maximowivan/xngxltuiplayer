@@ -37,6 +37,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchLoadedMsg:
 		return m, m.handleSearchLoaded(msg)
 
+	case auditionReadyMsg:
+		return m, m.handleAuditionReady(msg)
+
 	case libraryChangedMsg:
 		cmds := []tea.Cmd{m.waitLibraryChange()}
 		if cmd := m.startRefresh(); cmd != nil {
@@ -408,28 +411,42 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.linkResults) > 0 {
 			switch key {
 			case "up":
+				m.stopAudition()
 				m.linkCursor--
 				if m.linkCursor < 0 {
 					m.linkCursor = 0
 				}
 				return m, nil
 			case "down":
+				m.stopAudition()
 				m.linkCursor++
 				if m.linkCursor >= len(m.linkResults) {
 					m.linkCursor = len(m.linkResults) - 1
 				}
 				return m, nil
 			case "pgup":
+				m.stopAudition()
 				m.linkCursor = maxInt(0, m.linkCursor-6)
 				return m, nil
 			case "pgdown":
+				m.stopAudition()
 				m.linkCursor = minInt(len(m.linkResults)-1, m.linkCursor+6)
 				return m, nil
 			case "home":
+				m.stopAudition()
 				m.linkCursor = 0
 				return m, nil
 			case "end":
+				m.stopAudition()
 				m.linkCursor = len(m.linkResults) - 1
+				return m, nil
+			case " ":
+				return m, m.toggleAudition()
+			case "ctrl+space", "ctrl+@":
+				m.toggleSearchSelection()
+				return m, nil
+			case "ctrl+a":
+				m.selectAllSearch()
 				return m, nil
 			case "enter":
 				return m, m.enqueueSearchResult()
@@ -439,6 +456,7 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.clearLinkResults()
 				return m, m.linkInput.Focus()
 			default:
+				m.stopAudition()
 				m.clearLinkResults()
 				m.linkInput.Focus()
 			}

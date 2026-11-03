@@ -64,6 +64,17 @@ func TestFailedAudioInitIsNotCachedAsSuccess(t *testing.T) {
 	}
 }
 
+func TestPreviewIdleIsSafe(t *testing.T) {
+	engine := New(0.5)
+	if engine.PreviewActive() {
+		t.Fatal("new engine reports an active preview")
+	}
+	if engine.PreviewPosition() != 0 || engine.PreviewDuration() != 0 {
+		t.Fatal("new engine reports preview timing")
+	}
+	engine.StopPreview()
+}
+
 func TestDecodeWAV(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tone.wav")
