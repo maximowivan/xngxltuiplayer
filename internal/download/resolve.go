@@ -38,6 +38,7 @@ type ytInfo struct {
 	Title       string        `json:"title"`
 	Track       string        `json:"track"`
 	Artist      string        `json:"artist"`
+	Artists     []string      `json:"artists"`
 	Creator     string        `json:"creator"`
 	Album       string        `json:"album"`
 	Uploader    string        `json:"uploader"`
@@ -51,7 +52,12 @@ type ytInfo struct {
 	URL         string        `json:"url"`
 	Ext         string        `json:"ext"`
 	IsLive      bool          `json:"is_live"`
+	LiveStatus  string        `json:"live_status"`
 	Entries     []ytInfo      `json:"entries"`
+}
+
+func isLiveEntry(entry ytInfo) bool {
+	return entry.IsLive || entry.LiveStatus == "is_live" || entry.LiveStatus == "is_upcoming"
 }
 
 func infoThumbnail(info *ytInfo) string {
@@ -424,7 +430,7 @@ func (m *Manager) fetchSearch(ctx context.Context, query string, limit int) (*yt
 	}
 	entries := make([]ytInfo, 0, len(info.Entries))
 	for _, e := range info.Entries {
-		if e.ID != "" && !e.IsLive {
+		if e.ID != "" && !isLiveEntry(e) {
 			entries = append(entries, e)
 		}
 	}
@@ -443,7 +449,7 @@ func chooseSearchEntry(entries []ytInfo, query string) ytInfo {
 	best := entries[0]
 	for _, e := range entries {
 		title := normalizeTitle(e.Title)
-		uploader := normalizeTitle(firstNonEmpty(e.Uploader, e.Channel, e.Artist))
+		uploader := normalizeTitle(entryArtist(&e))
 		score := 0
 		if title == q {
 			score += 80
@@ -483,7 +489,7 @@ func metaFromInfo(info *ytInfo) (Meta, error) {
 		return Meta{}, errors.New("live streams cannot be downloaded")
 	}
 	title := cleanText(firstNonEmpty(info.Track, info.Title))
-	artist := cleanArtist(firstNonEmpty(info.Artist, info.Creator, info.Uploader, info.Channel))
+	artist := entryArtist(info)
 	if artist == "" {
 		if left, right, ok := splitArtistTitle(title); ok {
 			artist, title = cleanText(left), cleanText(right)
@@ -532,7 +538,7 @@ func infoURL(info *ytInfo) string {
 	return ""
 }
 
-var suffixPattern = regexp.MustCompile(`(?i)\s*[\[(]\s*(official\s*(music\s*)?(video|audio)|official\s*lyric\s*video|lyric\s*video|video\s*(oficial|lyric)|audio\s*oficial|performance\s*video|audio|visualizer|hd|hq|4k|explicit)\s*[\])]\s*$`)
+var suffixPattern = regexp.MustCompile(`(?i)\s*[\[(]\s*(official\s*(music\s*)?(video|audio)(\s+remaster(ed)?)?|official\s*lyric\s*video|lyric\s*video|video\s*(oficial|lyric)|audio\s*oficial|performance\s*video|audio|visualizer|hd|hq|4k|explicit)\s*[\])]\s*$`)
 
 func cleanVideoSuffix(title string) string {
 	for {
@@ -575,6 +581,22 @@ func stripArtistPrefix(title, artist string) string {
 	return title
 }
 
+func stripArtistSuffix(title, artist string) string {
+	normArtist := normalizeTitle(artist)
+	if normArtist == "" {
+		return title
+	}
+	if idx := strings.LastIndex(title, " - "); idx > 0 {
+		tail := normalizeTitle(title[idx+3:])
+		if tail == normArtist || strings.Contains(tail, normArtist) {
+			if rest := strings.TrimSpace(title[:idx]); rest != "" {
+				return rest
+			}
+		}
+	}
+	return title
+}
+
 func splitArtistTitle(title string) (artist, track string, ok bool) {
 	for _, sep := range []string{" - ", " – ", " — "} {
 		if idx := strings.Index(title, sep); idx > 0 && idx < len(title)-len(sep) {
@@ -586,6 +608,23 @@ func splitArtistTitle(title string) (artist, track string, ok bool) {
 
 func cleanText(s string) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+}
+
+// entryArtist prefers structured artist metadata (SoundCloud exposes an
+// artists array) over uploader/channel names.
+func entryArtist(info *ytInfo) string {
+	if info == nil {
+		return ""
+	}
+	if artist := cleanArtist(info.Artist); artist != "" {
+		return artist
+	}
+	for _, artist := range info.Artists {
+		if cleaned := cleanArtist(artist); cleaned != "" {
+			return cleaned
+		}
+	}
+	return cleanArtist(firstNonEmpty(info.Creator, info.Uploader, info.Channel))
 }
 
 // cleanArtist removes suffixes that YouTube adds to auto-generated artist

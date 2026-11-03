@@ -34,6 +34,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewLoadedMsg:
 		return m, m.handlePreviewLoaded(msg)
 
+	case searchLoadedMsg:
+		return m, m.handleSearchLoaded(msg)
+
 	case libraryChangedMsg:
 		cmds := []tea.Cmd{m.waitLibraryChange()}
 		if cmd := m.startRefresh(); cmd != nil {
@@ -385,23 +388,87 @@ func (m *Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := normalizeShortcut(msg.String())
 	switch m.modal {
-	case modalAddLink, modalNewPlaylist:
+	case modalAddLink:
+		if m.previewLoading {
+			if key == "esc" {
+				m.closeModal()
+			}
+			return m, nil
+		}
+		if m.linkLoading {
+			switch key {
+			case "esc":
+				m.clearLinkResults()
+				return m, m.linkInput.Focus()
+			case "tab":
+				return m, m.toggleLinkSource()
+			}
+			return m, nil
+		}
+		if len(m.linkResults) > 0 {
+			switch key {
+			case "up":
+				m.linkCursor--
+				if m.linkCursor < 0 {
+					m.linkCursor = 0
+				}
+				return m, nil
+			case "down":
+				m.linkCursor++
+				if m.linkCursor >= len(m.linkResults) {
+					m.linkCursor = len(m.linkResults) - 1
+				}
+				return m, nil
+			case "pgup":
+				m.linkCursor = maxInt(0, m.linkCursor-6)
+				return m, nil
+			case "pgdown":
+				m.linkCursor = minInt(len(m.linkResults)-1, m.linkCursor+6)
+				return m, nil
+			case "home":
+				m.linkCursor = 0
+				return m, nil
+			case "end":
+				m.linkCursor = len(m.linkResults) - 1
+				return m, nil
+			case "enter":
+				return m, m.enqueueSearchResult()
+			case "tab":
+				return m, m.toggleLinkSource()
+			case "esc":
+				m.clearLinkResults()
+				return m, m.linkInput.Focus()
+			default:
+				m.clearLinkResults()
+				m.linkInput.Focus()
+			}
+		}
+		switch key {
+		case "esc":
+			m.closeModal()
+			return m, nil
+		case "tab":
+			return m, m.toggleLinkSource()
+		case "enter":
+			return m, m.submitLink()
+		}
+		if m.linkErr != "" {
+			m.linkErr = ""
+		}
+		var cmd tea.Cmd
+		m.linkInput, cmd = m.linkInput.Update(msg)
+		return m, cmd
+
+	case modalNewPlaylist:
 		switch key {
 		case "esc":
 			m.closeModal()
 			return m, nil
 		case "enter":
-			if m.modal == modalAddLink {
-				return m, m.submitLink()
-			}
 			return m, m.submitPlaylistName()
 		}
 		var cmd tea.Cmd
-		if m.modal == modalAddLink {
-			m.linkInput, cmd = m.linkInput.Update(msg)
-		} else {
-			m.nameInput, cmd = m.nameInput.Update(msg)
-		}
+		m.nameInput, cmd = m.nameInput.Update(msg)
 		return m, cmd
 
 	case modalEQ:

@@ -94,6 +94,13 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 						Skipped:       1,
 					}
 					m.linkInput.SetValue(h)
+					m.linkResults = []download.SearchResult{{
+						Title:    h,
+						Artist:   h,
+						Duration: time.Minute,
+						Source:   download.SearchYouTube,
+					}}
+					m.linkQuery = h
 					m.nameInput.SetValue(h)
 					m.m3uInput.SetValue(h)
 					m.searchInput.SetValue(h)

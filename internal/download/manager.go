@@ -215,6 +215,10 @@ func (m *Manager) Enqueue(raw string) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
+	return m.enqueueLink(link)
+}
+
+func (m *Manager) enqueueLink(link Link) (Job, error) {
 	if link.Kind.Batch() {
 		return Job{}, errors.New("this link contains several tracks — use the playlist preview")
 	}
@@ -228,13 +232,23 @@ func (m *Manager) Enqueue(raw string) (Job, error) {
 	default:
 	}
 
+	title := link.URL
+	artist := ""
+	if link.Seed != nil {
+		if s := cleanText(link.Seed.Title); s != "" {
+			title = s
+		}
+		artist = cleanText(link.Seed.Artist)
+	}
+
 	m.mu.Lock()
 	m.nextID++
 	job := &Job{
 		ID:       m.nextID,
 		URL:      link.URL,
 		Kind:     link.Kind,
-		Title:    link.URL,
+		Title:    title,
+		Artist:   artist,
 		Stage:    "queued",
 		Detail:   "waiting for a free slot",
 		Progress: -1,

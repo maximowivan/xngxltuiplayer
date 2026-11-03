@@ -34,6 +34,7 @@ func TestCleanVideoSuffix(t *testing.T) {
 		{"Night Drive (Video Oficial)", "Night Drive"},
 		{"Night Drive (Audio Oficial)", "Night Drive"},
 		{"Night Drive (Performance Video)", "Night Drive"},
+		{"Night Drive (Official Music Video Remastered)", "Night Drive"},
 		{"Night Drive ( Video Lyric )", "Night Drive"},
 		{"Night Drive (Live)", "Night Drive (Live)"},
 	}
@@ -55,6 +56,7 @@ func TestStripArtistPrefix(t *testing.T) {
 		{"Aurora - Aurora", "Aurora", "Aurora"},
 		{"Arcángel - FN8 (Video Lyric)", "Arcangel", "FN8 (Video Lyric)"},
 		{"BELLAKEO (Video Oficial) - Peso Pluma, Anitta", "Peso Pluma", "BELLAKEO (Video Oficial)"},
+		{"Get Lucky [Original Version] - Daft Punk", "Daft Punk", "Get Lucky [Original Version]"},
 		{"Aurora - ", "Aurora", "Aurora - "},
 	}
 	for _, tt := range tests {

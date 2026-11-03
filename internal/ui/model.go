@@ -101,6 +101,14 @@ type previewLoadedMsg struct {
 	err     error
 }
 
+type searchLoadedMsg struct {
+	seq     int
+	source  download.SearchSource
+	query   string
+	results []download.SearchResult
+	err     error
+}
+
 type artLoadedMsg struct {
 	path string
 	img  image.Image
@@ -175,6 +183,13 @@ type Model struct {
 
 	modal          modalKind
 	linkInput      textinput.Model
+	linkSource     download.SearchSource
+	linkResults    []download.SearchResult
+	linkCursor     int
+	linkQuery      string
+	linkLoading    bool
+	linkErr        string
+	linkSeq        int
 	nameInput      textinput.Model
 	m3uInput       textinput.Model
 	modalCursor    int
@@ -309,7 +324,7 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 		m.startupUntil = time.Now().Add(15 * time.Second)
 	}
 
-	m.linkInput = newInput(currentGlyphs.Prompt, "https://www.youtube.com/playlist?list="+currentGlyphs.Ellipsis, 4096)
+	m.linkInput = newInput(currentGlyphs.Prompt, "Search a track or paste a link"+currentGlyphs.Ellipsis, 4096)
 	m.nameInput = newInput(currentGlyphs.Prompt, "Playlist name", 48)
 	m.m3uInput = newInput(currentGlyphs.Prompt, "playlist.m3u8 (relative to the music folder)", 4096)
 	m.searchInput = newInput("/ ", "search title, artist, album"+currentGlyphs.Ellipsis, 120)
@@ -1880,6 +1895,12 @@ func (m *Model) openAddLink() tea.Cmd {
 	m.preview = nil
 	m.previewLoading = false
 	m.previewSeq++
+	m.linkResults = nil
+	m.linkCursor = 0
+	m.linkQuery = ""
+	m.linkLoading = false
+	m.linkErr = ""
+	m.linkSeq++
 	m.linkInput.SetValue("")
 	m.resizeInputs()
 	return m.linkInput.Focus()
@@ -2049,6 +2070,11 @@ func (m *Model) closeModal() {
 	m.previewSeq++
 	m.previewLoading = false
 	m.preview = nil
+	m.linkSeq++
+	m.linkLoading = false
+	m.linkResults = nil
+	m.linkCursor = 0
+	m.linkErr = ""
 	switch m.modal {
 	case modalAddLink:
 		m.linkInput.Blur()
@@ -2075,14 +2101,27 @@ func (m *Model) closeModal() {
 
 func (m *Model) submitLink() tea.Cmd {
 	raw := strings.TrimSpace(m.linkInput.Value())
+	if len(m.linkResults) > 0 {
+		return m.enqueueSearchResult()
+	}
 	if raw == "" {
-		m.modalErr = "Paste a Spotify, SoundCloud or YouTube link first."
+		m.modalErr = "Paste a link or type a search query first."
 		return nil
 	}
-	if m.previewLoading {
+	if m.previewLoading || m.linkLoading {
 		return nil
 	}
+	if looksLikeLink(raw) {
+		return m.previewLink(raw)
+	}
+	return m.startLinkSearch(raw)
+}
+
+func (m *Model) previewLink(raw string) tea.Cmd {
 	m.modalErr = ""
+	m.linkErr = ""
+	m.linkResults = nil
+	m.linkLoading = false
 	m.previewLoading = true
 	m.previewSeq++
 	m.linkInput.Blur()
@@ -2093,6 +2132,121 @@ func (m *Model) submitLink() tea.Cmd {
 		preview, err := m.mgr.Preview(ctx, raw)
 		return previewLoadedMsg{seq: seq, raw: raw, preview: preview, err: err}
 	}
+}
+
+func (m *Model) startLinkSearch(raw string) tea.Cmd {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	m.linkLoading = true
+	m.linkErr = ""
+	m.modalErr = ""
+	m.linkQuery = raw
+	m.linkResults = nil
+	m.linkCursor = 0
+	m.linkSeq++
+	m.linkInput.Blur()
+	seq := m.linkSeq
+	source := m.linkSource
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		results, err := m.mgr.Search(ctx, raw, source, download.SearchResultLimit)
+		return searchLoadedMsg{seq: seq, source: source, query: raw, results: results, err: err}
+	}
+}
+
+func (m *Model) handleSearchLoaded(msg searchLoadedMsg) tea.Cmd {
+	if msg.seq != m.linkSeq || m.modal != modalAddLink {
+		return nil
+	}
+	m.linkLoading = false
+	if msg.err != nil {
+		m.linkErr = msg.err.Error()
+		m.linkResults = nil
+		return m.linkInput.Focus()
+	}
+	m.linkResults = msg.results
+	m.linkCursor = 0
+	m.linkQuery = msg.query
+	if len(m.linkResults) == 0 {
+		m.linkErr = "Nothing found on " + msg.source.String() + ". Try another query."
+	}
+	return m.linkInput.Focus()
+}
+
+func (m *Model) enqueueSearchResult() tea.Cmd {
+	if m.linkCursor < 0 || m.linkCursor >= len(m.linkResults) {
+		return nil
+	}
+	result := m.linkResults[m.linkCursor]
+	job, err := m.mgr.EnqueueResult(result)
+	if err != nil {
+		m.linkErr = err.Error()
+		return m.linkInput.Focus()
+	}
+	m.jobSeen[job.ID] = job.Status
+	m.linkInput.Blur()
+	m.modal = modalDownloads
+	m.modalErr = ""
+	m.linkResults = nil
+	m.linkErr = ""
+	m.refreshJobs()
+	m.downloadsCur = maxInt(0, len(m.jobs)-1)
+	m.setToast("Downloading: "+cleanText(result.Title), toastSuccess, 3*time.Second)
+	return nil
+}
+
+func (m *Model) clearLinkResults() {
+	m.linkSeq++
+	m.linkLoading = false
+	m.linkResults = nil
+	m.linkCursor = 0
+	m.linkErr = ""
+}
+
+func (m *Model) toggleLinkSource() tea.Cmd {
+	wasLoading := m.linkLoading
+	hadResults := len(m.linkResults) > 0
+	m.linkSeq++
+	m.linkSource = m.linkSource.Next()
+	m.linkLoading = false
+	m.linkErr = ""
+	m.linkResults = nil
+	m.linkCursor = 0
+	query := strings.TrimSpace(m.linkInput.Value())
+	if query != "" && (hadResults || wasLoading) {
+		return m.startLinkSearch(query)
+	}
+	return m.linkInput.Focus()
+}
+
+// looksLikeLink distinguishes a pasted URL from a text search query.
+func looksLikeLink(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "spotify:") || strings.Contains(s, "://") {
+		return true
+	}
+	for _, prefix := range []string{
+		"open.spotify.com/", "spotify.com/", "spoti.fi/", "spotify.link/",
+		"music.yandex.", "soundcloud.com/", "on.soundcloud.com/",
+		"youtube.com/", "music.youtube.com/", "youtu.be/",
+	} {
+		if strings.Contains(s, prefix) {
+			return true
+		}
+	}
+	if strings.ContainsAny(s, " \t") {
+		return false
+	}
+	if ext := filepath.Ext(s); len(ext) >= 2 && len(ext) <= 6 {
+		return true
+	}
+	return strings.Contains(s, ".") && strings.Contains(s, "/")
 }
 
 func (m *Model) handlePreviewLoaded(msg previewLoadedMsg) tea.Cmd {

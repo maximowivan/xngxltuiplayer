@@ -244,7 +244,7 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 		default:
 			message = []string{
 				"Your library is empty.",
-				"Press a to paste a Spotify, SoundCloud or YouTube link.",
+				"Press a to search for a track or paste a link.",
 			}
 		}
 		top := maxInt(0, (rows-len(message)-2)/2)
@@ -989,7 +989,7 @@ func (m *Model) renderHints() string {
 				keyHint("tab", "tracks"),
 				keyHint("P", "new"),
 				keyHint("D", "delete"),
-				keyHint("a", "add link"),
+				keyHint("a", "search / add"),
 				keyHint("?", "help"),
 				keyHint("q", "quit"),
 			)
@@ -1016,7 +1016,7 @@ func (m *Model) renderHints() string {
 			keyHint("enter", "play"),
 			keyHint("space", "pause"),
 			keyHint("/", "search"),
-			keyHint("a", "add link"),
+			keyHint("a", "search / add"),
 			keyHint("P", "playlist"),
 			keyHint("x", "add"),
 			keyHint("d", "downloads"),
@@ -1065,7 +1065,28 @@ func (m *Model) viewWithModal(w, h int) string {
 
 func (m *Model) renderModalHints(w int) string {
 	switch m.modal {
-	case modalAddLink, modalNewPlaylist:
+	case modalAddLink:
+		if len(m.linkResults) > 0 {
+			return hintLine(
+				keyHint(currentGlyphs.UpDown, "select"),
+				keyHint("enter", "download"),
+				keyHint("tab", "source"),
+				keyHint("esc", "back"),
+			)
+		}
+		if m.linkLoading {
+			return hintLine(
+				keyHint("tab", "source"),
+				keyHint("esc", "cancel"),
+			)
+		}
+		return hintLine(
+			keyHint("enter", "search / confirm"),
+			keyHint("tab", "source"),
+			keyHint("ctrl+v", "paste"),
+			keyHint("esc", "close"),
+		)
+	case modalNewPlaylist:
 		return hintLine(
 			keyHint("enter", "confirm"),
 			keyHint("esc", "cancel"),
@@ -1123,7 +1144,7 @@ func (m *Model) renderModalHints(w int) string {
 			keyHint("r/R", "retry"),
 			keyHint("c", "cancel"),
 			keyHint("C", "clear finished"),
-			keyHint("a", "add link"),
+			keyHint("a", "search / add"),
 			keyHint("esc", "close"),
 		)
 	case modalHelp:

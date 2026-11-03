@@ -126,7 +126,7 @@ func (m *Manager) Preview(ctx context.Context, raw string) (Preview, error) {
 
 func previewTrackFromEntry(kind Kind, entry ytInfo, album string) (PreviewTrack, bool) {
 	title := cleanText(firstNonEmpty(entry.Track, entry.Title))
-	if title == "" || isUnavailableEntry(title) || entry.IsLive {
+	if title == "" || isUnavailableEntry(title) || isLiveEntry(entry) {
 		return PreviewTrack{}, false
 	}
 	url := batchEntryURL(kind, entry)
@@ -134,7 +134,7 @@ func previewTrackFromEntry(kind Kind, entry ytInfo, album string) (PreviewTrack,
 		return PreviewTrack{}, false
 	}
 
-	artist := cleanArtist(firstNonEmpty(entry.Artist, entry.Creator, entry.Uploader, entry.Channel))
+	artist := entryArtist(&entry)
 	switch {
 	case artist != "":
 		title = stripArtistPrefix(title, artist)

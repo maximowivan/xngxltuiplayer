@@ -65,15 +65,22 @@ func modalHeight(contentH, desired int) int {
 func (m *Model) renderAddLinkModal(w, contentH int) string {
 	width := modalWidth(w)
 	innerW := width - 4
-	height := modalHeight(contentH, 10)
+	visible := minInt(8, len(m.linkResults))
+	if visible > 0 && contentH-10 < visible {
+		visible = maxInt(1, contentH-10)
+	}
+	height := modalHeight(contentH, 10+visible)
 
+	source := m.linkSource.String()
+	header := accent2Style.Render(source) + faintStyle.Render("   Tab to switch source")
+	if len(m.linkResults) > 0 {
+		header = accent2Style.Render(source) + dimStyle.Render(fmt.Sprintf("   %d results", len(m.linkResults))) +
+			faintStyle.Render("   Tab source")
+	}
 	lines := []string{
-		textStyle.Render(truncateText("Paste a link and xngxltuiplayer will download, convert and tag it.", innerW)),
+		textStyle.Render(truncateText("Paste a link, or type a name to search for music.", innerW)),
 		"",
-		accent2Style.Render("Spotify track") + faintStyle.Render(currentGlyphs.Separator) +
-			accent2Style.Render("SoundCloud track/set") + faintStyle.Render(currentGlyphs.Separator) +
-			accent2Style.Render("YouTube video/playlist") + faintStyle.Render(currentGlyphs.Separator) +
-			accent2Style.Render("audio URL"),
+		header,
 		"",
 		fitLine(m.linkInput.View(), innerW),
 		"",
@@ -85,13 +92,44 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 			frames = []rune("|/-\\")
 		}
 		lines = append(lines, warningStyle.Render(fmt.Sprintf("%c Reading the playlist%s", frames[m.spinner%len(frames)], currentGlyphs.Ellipsis)))
+	case m.linkLoading:
+		frames := currentGlyphs.Spinner
+		if len(frames) == 0 {
+			frames = []rune("|/-\\")
+		}
+		lines = append(lines, warningStyle.Render(fmt.Sprintf("%c Searching %s%s", frames[m.spinner%len(frames)], source, currentGlyphs.Ellipsis)))
+	case m.linkErr != "":
+		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.linkErr), innerW)))
 	case m.modalErr != "":
 		lines = append(lines, errorStyle.Render(truncateText(cleanText(m.modalErr), innerW)))
+	case len(m.linkResults) > 0:
+		start := 0
+		if m.linkCursor >= visible {
+			start = m.linkCursor - visible + 1
+		}
+		end := minInt(len(m.linkResults), start+visible)
+		for i := start; i < end; i++ {
+			result := m.linkResults[i]
+			label := cleanText(result.Title)
+			if artist := cleanText(result.Artist); artist != "" {
+				label = artist + " " + currentGlyphs.Dash + " " + label
+			}
+			left := fmt.Sprintf("%2d. %s", i+1, label)
+			right := model.FormatDuration(result.Duration)
+			row := padBetween(left, right, innerW)
+			if i == m.linkCursor {
+				lines = append(lines, selectedStyle.Render(row))
+			} else {
+				lines = append(lines, textStyle.Render(row))
+			}
+		}
 	default:
-		lines = append(lines, dimStyle.Render("The file is saved to your music folder as MP3."))
+		lines = append(lines, dimStyle.Render("Enter searches "+source+"; pasted links still work."))
 	}
-	lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported "+currentGlyphs.Dash+" use a YouTube or SoundCloud playlist."))
-	return renderBox("Add music", lines, width, height, colAccent, colAccent)
+	if len(m.linkResults) == 0 {
+		lines = append(lines, dimStyle.Render("Spotify playlists and albums are not supported "+currentGlyphs.Dash+" use a YouTube or SoundCloud playlist."))
+	}
+	return renderBox("Find music", lines, width, height, colAccent, colAccent)
 }
 
 func (m *Model) renderPreviewModal(w, contentH int) string {
@@ -544,7 +582,7 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		}, playback[15:]...)...)
 	}
 	library := []keyBinding{
-		{"a", "add music link"},
+		{"a", "search or add music"},
 		{"P", "new playlist"},
 		{"I", "import M3U"},
 		{"E", "export M3U"},
@@ -645,7 +683,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 
 	if len(jobs) == 0 {
 		lines = append(lines, dimStyle.Render("No downloads yet."))
-		lines = append(lines, dimStyle.Render("Press a to paste a track, YouTube playlist or SoundCloud set."))
+		lines = append(lines, dimStyle.Render("Press a to search for a track or paste a link."))
 		for len(lines) < innerH {
 			lines = append(lines, "")
 		}
