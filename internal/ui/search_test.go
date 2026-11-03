@@ -161,6 +161,36 @@ func TestSearchSelection(t *testing.T) {
 	}
 }
 
+func TestSearchSelectionKeysIgnoreModifierOnly(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.openAddLink()
+	m.linkResults = []download.SearchResult{
+		{URL: "https://a", Title: "A"},
+		{URL: "https://b", Title: "B"},
+	}
+	m.linkCursor = 0
+
+	// Windows can deliver a bare Ctrl press as an unknown/empty key message.
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyType(9999)})
+	if len(m.linkResults) != 2 || m.modal != modalAddLink {
+		t.Fatalf("modifier-only key dismissed results: modal=%v results=%d", m.modal, len(m.linkResults))
+	}
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlAt})
+	if !m.linkSelected["https://a"] {
+		t.Fatal("ctrl+space did not select the current result")
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if m.linkSelected["https://a"] {
+		t.Fatal("x did not toggle the current result off")
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	if got := m.selectedSearchCount(); got != 2 {
+		t.Fatalf("ctrl+a selected %d, want 2", got)
+	}
+}
+
 func TestAuditionStates(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()

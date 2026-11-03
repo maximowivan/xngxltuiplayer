@@ -1069,7 +1069,7 @@ func (m *Model) renderModalHints(w int) string {
 		if len(m.linkResults) > 0 {
 			return hintLine(
 				keyHint("space", "preview"),
-				keyHint("ctrl+space", "select"),
+				keyHint("ctrl+space / x", "select"),
 				keyHint("enter", "download"),
 				keyHint("tab", "source"),
 				keyHint("esc", "back"),

@@ -442,7 +442,10 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case " ":
 				return m, m.toggleAudition()
-			case "ctrl+space", "ctrl+@":
+			case "ctrl+space", "ctrl+@", "ctrl+ ":
+				m.toggleSearchSelection()
+				return m, nil
+			case "x":
 				m.toggleSearchSelection()
 				return m, nil
 			case "ctrl+a":
@@ -456,9 +459,16 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.clearLinkResults()
 				return m, m.linkInput.Focus()
 			default:
-				m.stopAudition()
-				m.clearLinkResults()
-				m.linkInput.Focus()
+				// Modifier-only keys (and terminal key-release events) can
+				// arrive as empty/non-rune messages. They must not dismiss the
+				// result list, otherwise Ctrl+Space never reaches the toggle.
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.stopAudition()
+					m.clearLinkResults()
+					m.linkInput.Focus()
+				} else {
+					return m, nil
+				}
 			}
 		}
 		switch key {
