@@ -257,6 +257,31 @@ func (m *Model) clickNowPlaying(innerX, innerY, width, contentH int) {
 
 func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	w, h := m.dims()
+	layout := m.coverLayout(w, h)
+	if layout.grid {
+		if coverPaneContains(layout.cover, msg.X, msg.Y) {
+			m.coverMode = false
+			return m, nil
+		}
+		if track, ok := m.coverUpNextTrackAt(layout.upNext, msg.X, msg.Y); ok {
+			if idx := m.queueIndexFor(track.Path); idx >= 0 {
+				return m, m.playQueueIndex(idx)
+			}
+			return m, nil
+		}
+		if coverPaneContains(layout.player, msg.X, msg.Y) {
+			innerX := msg.X - (layout.player.left + 2)
+			switch msg.Y - layout.player.top {
+			case 3:
+				m.seekFromProgressBar(msg.X, w)
+			case 4:
+				return m, m.handleCoverControlClick(innerX, layout.player.width-4)
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	artW, artH, artTop := m.coverArtSize(w, h)
 	if artW > 0 && artH > 0 {
 		frameW := artW + 2

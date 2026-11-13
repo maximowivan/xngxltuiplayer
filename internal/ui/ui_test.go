@@ -787,7 +787,13 @@ func TestCoverModeTogglesFromArtClick(t *testing.T) {
 	if !m.coverMode {
 		t.Fatal("clicking the artwork should open cover mode")
 	}
-	m.Update(tea.MouseMsg{X: 55, Y: 10, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	cover := m.coverLayout(m.width, m.height).cover
+	m.Update(tea.MouseMsg{
+		X:      cover.left + cover.width/2,
+		Y:      cover.top + cover.height/2,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
 	if m.coverMode {
 		t.Fatal("clicking the large artwork should close cover mode")
 	}

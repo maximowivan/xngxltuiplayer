@@ -398,9 +398,85 @@ func (m *Model) rightArtSize(innerW, innerH int) (artW, artH int) {
 	return artW, artH
 }
 
-// coverArtSize returns the inner art dimensions and first art row for cover
-// mode. The art is wrapped in a one-cell frame, so the frame occupies rows
-// artTop-1 through artTop+artH.
+type coverPane struct {
+	left   int
+	top    int
+	width  int
+	height int
+}
+
+type coverLayoutSpec struct {
+	grid       bool
+	cover      coverPane
+	upNext     coverPane
+	player     coverPane
+	visualizer coverPane
+}
+
+// coverLayout computes the four-panel cover screen. It only enables the grid
+// when every pane has enough room; otherwise the caller falls back to the
+// compact cover + player view.
+func (m *Model) coverLayout(w, h int) coverLayoutSpec {
+	var out coverLayoutSpec
+	if w < 80 || h < 22 {
+		return out
+	}
+	const (
+		margin  = 1
+		gap     = 1
+		bottomH = 6
+	)
+	gridW := w - margin*2
+	gridH := h - 3
+	topH := gridH - gap - bottomH
+	if topH < 11 {
+		return out
+	}
+
+	leftW := gridW * 54 / 100
+	if maxLeft := topH*2 + 12; leftW > maxLeft {
+		leftW = maxLeft
+	}
+	if leftW < 40 {
+		leftW = 40
+	}
+	rightW := gridW - gap - leftW
+	if rightW < 32 {
+		return out
+	}
+	// On very wide windows the right column would otherwise grow past the
+	// cover column. Keep it a touch narrower and center the grid.
+	if rightW > leftW {
+		rightW = maxInt(32, leftW-2)
+		gridW = leftW + gap + rightW
+	}
+
+	// The art is two terminal cells wide per cell of height. If it would
+	// occupy less than half of the cover pane, the grid would look empty;
+	// fall back to the compact layout instead.
+	innerW := leftW - 4
+	artH := minInt(topH-2, innerW/2)
+	if artH < 4 || artH*4 < innerW {
+		return out
+	}
+
+	out.grid = true
+	x := (w - gridW) / 2
+	y := 1
+	out.cover = coverPane{left: x, top: y, width: leftW, height: topH}
+	out.upNext = coverPane{left: x + leftW + gap, top: y, width: rightW, height: topH}
+	out.player = coverPane{left: x, top: y + topH + gap, width: leftW, height: bottomH}
+	out.visualizer = coverPane{left: x + leftW + gap, top: y + topH + gap, width: rightW, height: bottomH}
+	return out
+}
+
+func coverPaneContains(p coverPane, x, y int) bool {
+	return x >= p.left && x < p.left+p.width && y >= p.top && y < p.top+p.height
+}
+
+// coverArtSize returns the inner art dimensions and first art row for the
+// compact cover layout. The art is wrapped in a one-cell frame, so the frame
+// occupies rows artTop-1 through artTop+artH.
 func (m *Model) coverArtSize(w, h int) (artW, artH, artTop int) {
 	// header + frame + player card + hints + toast
 	available := h - 11
@@ -425,9 +501,19 @@ func (m *Model) coverArtSize(w, h int) (artW, artH, artTop int) {
 	return artW, artH, 2 + slack/2
 }
 
-// renderCover draws a framed album cover with metadata and an optional UP NEXT
-// panel.
+// renderCover selects the adaptive cover layout.
 func (m *Model) renderCover(w, h int) string {
+	layout := m.coverLayout(w, h)
+	if layout.grid {
+		return m.renderCoverGrid(w, h, layout)
+	}
+	return m.renderCoverCompact(w, h)
+}
+
+// renderCoverCompact draws the fallback single-column cover with the current
+// player card. It is used when the window is too narrow or too short for the
+// four-pane grid.
+func (m *Model) renderCoverCompact(w, h int) string {
 	artW, artH, artTop := m.coverArtSize(w, h)
 	blank := strings.Repeat(" ", w)
 	lines := make([]string, 0, h)
@@ -502,6 +588,192 @@ func (m *Model) renderCover(w, h int) string {
 		lines = append(lines, blank)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) renderCoverGrid(w, h int, layout coverLayoutSpec) string {
+	cover := strings.Split(m.renderCoverArtPane(layout.cover), "\n")
+	upNext := strings.Split(m.renderCoverUpNextPane(layout.upNext), "\n")
+	player := strings.Split(m.renderCoverPlayerCard(layout.player.width), "\n")
+	visualizer := strings.Split(m.renderCoverVisualizerPane(layout.visualizer), "\n")
+	blank := strings.Repeat(" ", w)
+
+	body := make([]string, 0, h-3)
+	gap := layout.upNext.left - (layout.cover.left + layout.cover.width)
+	for i := 0; i < layout.cover.height; i++ {
+		leftLine, rightLine := "", ""
+		if i < len(cover) {
+			leftLine = cover[i]
+		}
+		if i < len(upNext) {
+			rightLine = upNext[i]
+		}
+		body = append(body, fitLine(
+			strings.Repeat(" ", layout.cover.left)+leftLine+
+				strings.Repeat(" ", maxInt(0, gap))+rightLine, w))
+	}
+	body = append(body, blank)
+	for i := 0; i < layout.player.height; i++ {
+		leftLine, rightLine := "", ""
+		if i < len(player) {
+			leftLine = player[i]
+		}
+		if i < len(visualizer) {
+			rightLine = visualizer[i]
+		}
+		body = append(body, fitLine(
+			strings.Repeat(" ", layout.player.left)+leftLine+
+				strings.Repeat(" ", maxInt(0, gap))+rightLine, w))
+	}
+
+	lines := []string{m.renderHeader(w)}
+	lines = append(lines, body...)
+	for len(lines) < h-2 {
+		lines = append(lines, blank)
+	}
+	lines = append(lines, fitLine(m.renderCoverHints(), w))
+	lines = append(lines, m.renderToastLine(w))
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, blank)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) renderCoverArtPane(pane coverPane) string {
+	innerW := pane.width - 4
+	innerH := pane.height - 2
+	if innerW < 1 || innerH < 1 {
+		return renderBox("Cover", nil, pane.width, pane.height, colFaint, colAccent)
+	}
+	lines := make([]string, 0, innerH)
+	if m.current == nil {
+		lines = append(lines, centerLine(dimStyle.Render("Nothing playing"), innerW))
+	} else {
+		artH := minInt(innerH, innerW/2)
+		artW := artH * 2
+		if artH < 4 {
+			lines = append(lines, centerLine(dimStyle.Render("No cover"), innerW))
+		} else {
+			img := m.artImage
+			if img == nil {
+				img = placeholderImage(artW, artH*2)
+			}
+			art := renderArt(img, artW, artH)
+			for i := 0; i < (innerH-artH)/2; i++ {
+				lines = append(lines, "")
+			}
+			for _, artLine := range art {
+				lines = append(lines, centerLine(artLine, innerW))
+			}
+		}
+	}
+	for len(lines) < innerH {
+		lines = append(lines, "")
+	}
+	if len(lines) > innerH {
+		lines = lines[:innerH]
+	}
+	return renderBox("Cover", lines, pane.width, pane.height, colFaint, colAccent)
+}
+
+func (m *Model) coverUpNextLimit(pane coverPane) int {
+	return minInt(10, maxInt(0, pane.height-3))
+}
+
+func (m *Model) renderCoverUpNextPane(pane coverPane) string {
+	innerW := pane.width - 4
+	innerH := pane.height - 2
+	if innerW < 1 || innerH < 1 {
+		return renderBox("Up next", nil, pane.width, pane.height, colFaint, colAccent2)
+	}
+	lines := make([]string, 0, innerH)
+	limit := m.coverUpNextLimit(pane)
+	tracks := m.upNextTracks(limit)
+	position := truncateText(m.coverQueueText(), innerW)
+	header := fitLine(faintStyle.Render(position), innerW)
+	if mouseHintAvailable() && len(tracks) > 0 && innerW >= 28 {
+		header = padBetween(faintStyle.Render(position), faintStyle.Render("click to play"), innerW)
+	}
+	lines = append(lines, header)
+
+	if len(tracks) == 0 {
+		message := "Queue is empty"
+		if m.current == nil {
+			message = "Nothing playing"
+		}
+		lines = append(lines, fitLine(dimStyle.Render(message), innerW))
+	} else {
+		for i, track := range tracks {
+			prefix := fmt.Sprintf("%2d. ", i+1)
+			label := cleanText(track.DisplayTitle())
+			if artist := strings.TrimSpace(cleanText(track.Artist)); artist != "" {
+				label = artist + " " + currentGlyphs.Dash + " " + label
+			}
+			duration := ""
+			if track.Duration > 0 {
+				duration = model.FormatDuration(track.Duration)
+			}
+			avail := innerW - ansi.StringWidth(prefix) - ansi.StringWidth(duration)
+			if duration != "" {
+				avail--
+			}
+			label = truncateText(label, maxInt(0, avail))
+			prefixStyle, labelStyle := dimStyle, textStyle
+			if i == 0 {
+				prefixStyle, labelStyle = accent2Style, accent2Style.Bold(true)
+			}
+			left := prefixStyle.Render(prefix) + labelStyle.Render(label)
+			row := left
+			if duration != "" {
+				row = padBetween(left, faintStyle.Render(duration), innerW)
+			} else {
+				row = fitLine(row, innerW)
+			}
+			lines = append(lines, row)
+		}
+	}
+	for len(lines) < innerH {
+		lines = append(lines, "")
+	}
+	if len(lines) > innerH {
+		lines = lines[:innerH]
+	}
+	return renderBox("Up next", lines, pane.width, pane.height, colFaint, colAccent2)
+}
+
+func (m *Model) coverUpNextTrackAt(pane coverPane, x, y int) (model.Track, bool) {
+	if x < pane.left+1 || x >= pane.left+pane.width-1 ||
+		y < pane.top+1 || y >= pane.top+pane.height-1 {
+		return model.Track{}, false
+	}
+	row := y - (pane.top + 1)
+	if row <= 0 {
+		return model.Track{}, false
+	}
+	index := row - 1
+	tracks := m.upNextTracks(m.coverUpNextLimit(pane))
+	if index < 0 || index >= len(tracks) {
+		return model.Track{}, false
+	}
+	return tracks[index], true
+}
+
+func (m *Model) renderCoverVisualizerPane(pane coverPane) string {
+	innerW := pane.width - 4
+	innerH := pane.height - 2
+	if innerW < 1 || innerH < 1 {
+		return renderBox("Visualizer", nil, pane.width, pane.height, colFaint, colAccent2)
+	}
+	lines := renderSpectrum(m.spectrum, innerW, innerH)
+	for len(lines) < innerH {
+		lines = append(lines, "")
+	}
+	if len(lines) > innerH {
+		lines = lines[:innerH]
+	}
+	return renderBox("Visualizer", lines, pane.width, pane.height, colFaint, colAccent2)
 }
 
 func (m *Model) coverCardGeometry(w, h int) (left, top, width, height int) {
@@ -1305,6 +1577,21 @@ func (m *Model) playerProgressGeometry(width int) (start, barWidth int) {
 // coverProgressGeometry returns the terminal x range of the seek bar in cover
 // mode.
 func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
+	layout := m.coverLayout(width, m.height)
+	if layout.grid {
+		innerW := maxInt(1, layout.player.width-4)
+		contentX := layout.player.left + 2
+		rightLabel := model.FormatDuration(m.duration)
+		timeW := maxInt(7, ansi.StringWidth(rightLabel))
+		if innerW < timeW*2+3 {
+			return contentX, maxInt(1, innerW)
+		}
+		barWidth = innerW - timeW*2 - 2
+		if barWidth < 1 {
+			barWidth = 1
+		}
+		return contentX + timeW + 1, barWidth
+	}
 	cardLeft, _, cardW, _ := m.coverCardGeometry(width, m.height)
 	if cardW <= 0 {
 		return 0, maxInt(1, width)

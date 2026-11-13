@@ -115,10 +115,13 @@ func TestCoverPauseButtonClick(t *testing.T) {
 	m.width, m.height = 130, 36
 	m.ended = true
 
-	cardLeft, cardTop, cardW, _ := m.coverCardGeometry(130, 36)
-	layout := m.coverControlsLine(cardW - 4)
-	x := cardLeft + 2 + layout.playStart
-	y := cardTop + 4
+	layout := m.coverLayout(130, 36)
+	if !layout.grid {
+		t.Fatal("130x36 should use the four-pane grid")
+	}
+	controls := m.coverControlsLine(layout.player.width - 4)
+	x := layout.player.left + 2 + controls.playStart
+	y := layout.player.top + 4
 	m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.ended {
 		t.Fatal("clicking the pause button did not reach togglePlay")

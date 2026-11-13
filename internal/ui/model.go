@@ -565,6 +565,20 @@ func (m *Model) sidebarRows() int {
 
 func (m *Model) spectrumBarCount() int {
 	w, _ := m.dims()
+	if m.coverMode {
+		layout := m.coverLayout(w, m.height)
+		if !layout.grid {
+			return 0
+		}
+		bars := maxInt(1, layout.visualizer.width-4) / 2
+		if bars < 4 {
+			bars = 4
+		}
+		if bars > 32 {
+			bars = 32
+		}
+		return bars
+	}
 	_, _, _, _, rightW, _ := m.layout()
 	var avail int
 	switch {
