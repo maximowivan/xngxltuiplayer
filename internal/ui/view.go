@@ -1150,28 +1150,9 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 	if m.repeat != "off" {
 		repeatStyle = accent2Style.Bold(true)
 	}
-
-	left := ""
-	leftW := 0
-	if iconShuffle != "" {
-		out.shuffleStart = 0
-		out.shuffleEnd = ansi.StringWidth(iconShuffle)
-		left += shuffleStyle.Render(iconShuffle)
-		leftW = out.shuffleEnd
-	}
 	repeatIcon := iconRepeat
 	if m.repeat == "one" {
 		repeatIcon += " " + iconRepeatOne
-	}
-	if repeatIcon != "" {
-		if leftW > 0 {
-			left += strings.Repeat(" ", gap)
-			leftW += gap
-		}
-		out.repeatStart = leftW
-		out.repeatEnd = leftW + ansi.StringWidth(repeatIcon)
-		left += repeatStyle.Render(repeatIcon)
-		leftW = out.repeatEnd
 	}
 
 	playIcon := iconPlayButton
@@ -1182,36 +1163,85 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 	if m.current != nil && m.loaded && !m.paused && !m.ended {
 		playIcon = iconPauseButton
 	}
+	shuffleText := ""
+	if iconShuffle != "" {
+		shuffleText = shuffleStyle.Render(iconShuffle)
+	}
+	repeatText := ""
+	if repeatIcon != "" {
+		repeatText = repeatStyle.Render(repeatIcon)
+	}
 	prevText := keyStyle.Render(iconPrev)
 	playText := playStyle.Render(playIcon)
 	nextText := keyStyle.Render(iconNext)
-	center := prevText + strings.Repeat(" ", gap) + playText + strings.Repeat(" ", gap) + nextText
-	centerW := ansi.StringWidth(center)
 
-	centerStart := maxInt(0, (width-centerW)/2)
-	if centerStart < leftW+1 {
-		left = ""
-		leftW = 0
-		out.shuffleStart, out.shuffleEnd = -1, -1
-		out.repeatStart, out.repeatEnd = -1, -1
-		centerStart = maxInt(0, (width-centerW)/2)
+	shuffleW := ansi.StringWidth(shuffleText)
+	repeatW := ansi.StringWidth(repeatText)
+	prevW := ansi.StringWidth(prevText)
+	playW := ansi.StringWidth(playText)
+	nextW := ansi.StringWidth(nextText)
+
+	// Keep shuffle and repeat next to the transport, matching the main screen:
+	// shuffle, previous, play/pause, next, repeat.
+	includeShuffle := shuffleW > 0
+	includeRepeat := repeatW > 0
+	groupW := func(withShuffle, withRepeat bool) int {
+		w := prevW + gap + playW + gap + nextW
+		if withShuffle {
+			w += shuffleW + gap
+		}
+		if withRepeat {
+			w += gap + repeatW
+		}
+		return w
+	}
+	total := groupW(includeShuffle, includeRepeat)
+	if total > width {
+		includeShuffle, includeRepeat = false, false
+		total = groupW(false, false)
+	}
+	start := maxInt(0, (width-total)/2)
+	x := start
+	if includeShuffle {
+		out.shuffleStart = x
+		x += shuffleW
+		out.shuffleEnd = x
+		x += gap
+	}
+	out.prevStart = x
+	x += prevW
+	out.prevEnd = x
+	x += gap
+	out.playStart = x
+	x += playW
+	out.playEnd = x
+	x += gap
+	out.nextStart = x
+	x += nextW
+	out.nextEnd = x
+	x += gap
+	if includeRepeat {
+		out.repeatStart = x
+		x += repeatW
+		out.repeatEnd = x
 	}
 
 	var b strings.Builder
-	if leftW > 0 {
-		b.WriteString(left)
-		b.WriteString(strings.Repeat(" ", maxInt(0, centerStart-leftW)))
-	} else {
-		b.WriteString(strings.Repeat(" ", centerStart))
+	b.WriteString(strings.Repeat(" ", start))
+	if includeShuffle {
+		b.WriteString(shuffleText)
+		b.WriteString(strings.Repeat(" ", gap))
 	}
-	b.WriteString(center)
+	b.WriteString(prevText)
+	b.WriteString(strings.Repeat(" ", gap))
+	b.WriteString(playText)
+	b.WriteString(strings.Repeat(" ", gap))
+	b.WriteString(nextText)
+	if includeRepeat {
+		b.WriteString(strings.Repeat(" ", gap))
+		b.WriteString(repeatText)
+	}
 	out.line = fitLine(b.String(), width)
-	out.prevStart = centerStart
-	out.prevEnd = centerStart + ansi.StringWidth(prevText)
-	out.playStart = out.prevEnd + gap
-	out.playEnd = out.playStart + ansi.StringWidth(playText)
-	out.nextStart = out.playEnd + gap
-	out.nextEnd = out.nextStart + ansi.StringWidth(nextText)
 	return out
 }
 

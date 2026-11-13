@@ -402,6 +402,28 @@ func TestCoverVolumeSliderClick(t *testing.T) {
 	}
 }
 
+func TestCoverControlsCluster(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.coverMode = true
+	m.width, m.height = 130, 36
+	layout := m.coverLayout(130, 36)
+	hero := m.coverHeroComposition(layout.cover)
+	controls := m.coverControlsLine(hero.info.width)
+	if controls.shuffleStart < 0 || controls.repeatStart < 0 {
+		t.Fatalf("shuffle/repeat hidden in a %d-col info column: %+v", hero.info.width, controls)
+	}
+	if controls.shuffleEnd > controls.prevStart {
+		t.Fatalf("shuffle is not left of prev: %+v", controls)
+	}
+	if controls.repeatStart < controls.nextEnd {
+		t.Fatalf("repeat is not right of next: %+v", controls)
+	}
+	if controls.prevEnd > controls.playStart || controls.playEnd > controls.nextStart {
+		t.Fatalf("transport order is broken: %+v", controls)
+	}
+}
+
 func TestCoverVolumeSliderCentered(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
