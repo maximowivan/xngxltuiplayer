@@ -191,11 +191,20 @@ func TestCoverGridSpectrumBarCount(t *testing.T) {
 	if want < 4 {
 		want = 4
 	}
-	if want > 32 {
-		want = 32
+	if want > 128 {
+		want = 128
 	}
 	if got := m.spectrumBarCount(); got != want {
 		t.Fatalf("spectrum bars = %d, want %d", got, want)
+	}
+	m.width, m.height = 180, 45
+	layout = m.coverLayout(180, 45)
+	want = (layout.cover.width - 4) / 2
+	if want <= 32 {
+		t.Fatalf("wide cover should need more than 32 bars, got %d", want)
+	}
+	if got := m.spectrumBarCount(); got != want {
+		t.Fatalf("wide spectrum bars = %d, want %d", got, want)
 	}
 	m.width, m.height = 60, 24
 	if got := m.spectrumBarCount(); got != 0 {

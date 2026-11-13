@@ -574,8 +574,8 @@ func (m *Model) spectrumBarCount() int {
 		if bars < 4 {
 			bars = 4
 		}
-		if bars > 32 {
-			bars = 32
+		if bars > 128 {
+			bars = 128
 		}
 		return bars
 	}
