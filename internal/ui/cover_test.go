@@ -22,7 +22,6 @@ func TestCoverModeShowsUpNextPanel(t *testing.T) {
 		"Neon Skyline",
 		"2024",
 		"queue 1/3",
-		"PLAYER",
 		"Night Drive",
 		"Aurora",
 		"vol 80%",
@@ -30,6 +29,9 @@ func TestCoverModeShowsUpNextPanel(t *testing.T) {
 		if !strings.Contains(frame, want) {
 			t.Errorf("cover frame is missing %q:\n%s", want, frame)
 		}
+	}
+	if strings.Contains(frame, "PLAYER") {
+		t.Errorf("the separate player panel should be gone:\n%s", frame)
 	}
 	for i, line := range strings.Split(frame, "\n") {
 		if got := ansi.StringWidth(line); got != 130 {
@@ -117,17 +119,18 @@ func TestCoverPauseButtonClick(t *testing.T) {
 
 	layout := m.coverLayout(130, 36)
 	if !layout.grid {
-		t.Fatal("130x36 should use the four-pane grid")
+		t.Fatal("130x36 should use the grid")
 	}
-	controls := m.coverControlsLine(layout.player.width - 4)
-	x := layout.player.left + 2 + controls.playStart
-	y := layout.player.top + 4
+	hero := m.coverHeroComposition(layout.cover)
+	controls := m.coverControlsLine(hero.info.width)
+	x := hero.info.left + controls.playStart
+	y := layout.cover.top + 1 + hero.controlsTop
 	m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if m.ended {
 		t.Fatal("clicking the pause button did not reach togglePlay")
 	}
-	if m.coverMode != true {
-		t.Fatal("clicking the player card should not close cover mode")
+	if !m.coverMode {
+		t.Fatal("clicking the transport should not close cover mode")
 	}
 }
 

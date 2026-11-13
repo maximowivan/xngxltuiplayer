@@ -274,15 +274,26 @@ func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if coverPaneContains(layout.player, msg.X, msg.Y) {
-			innerX := msg.X - (layout.player.left + 2)
-			switch msg.Y - layout.player.top {
-			case 3:
+		hero := m.coverHeroComposition(layout.cover)
+		if hero.info.width > 0 && msg.X >= hero.info.left && msg.X < hero.info.left+hero.info.width {
+			innerX := msg.X - hero.info.left
+			switch msg.Y - (layout.cover.top + 1) {
+			case hero.progressTop:
 				m.seekFromProgressBar(msg.X, w)
-			case 4:
-				return m, m.handleCoverControlClick(innerX, layout.player.width-4)
+			case hero.controlsTop:
+				return m, m.handleCoverControlClick(innerX, hero.info.width)
+			case hero.volumeTop:
+				start, end := m.coverVolumeBarBounds(w)
+				switch {
+				case start >= 0 && msg.X >= start && msg.X < end:
+					m.volDragging = true
+					m.setVolumeFromX(msg.X, w)
+				case start >= 0 && msg.X == start-1:
+					m.setVolume(m.volume - 5)
+				case start >= 0 && msg.X == end:
+					m.setVolume(m.volume + 5)
+				}
 			}
-			return m, nil
 		}
 		return m, nil
 	}
@@ -307,6 +318,17 @@ func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.seekFromProgressBar(msg.X, w)
 		case 4:
 			return m, m.handleCoverControlClick(innerX, cardW-4)
+		case 5:
+			start, end := m.coverVolumeBarBounds(w)
+			switch {
+			case start >= 0 && msg.X >= start && msg.X < end:
+				m.volDragging = true
+				m.setVolumeFromX(msg.X, w)
+			case start >= 0 && msg.X == start-1:
+				m.setVolume(m.volume - 5)
+			case start >= 0 && msg.X == end:
+				m.setVolume(m.volume + 5)
+			}
 		}
 		return m, nil
 	}
@@ -351,7 +373,15 @@ func (m *Model) seekFromProgressBar(x, width int) {
 }
 
 func (m *Model) setVolumeFromX(x, width int) {
-	start, end := m.volumeBarBounds(width)
+	var start, end int
+	if m.coverMode {
+		start, end = m.coverVolumeBarBounds(width)
+	} else {
+		start, end = m.volumeBarBounds(width)
+	}
+	if start < 0 || end <= start {
+		return
+	}
 	span := end - start - 1
 	if span < 1 {
 		span = 1

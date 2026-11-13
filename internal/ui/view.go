@@ -45,6 +45,9 @@ func (m *Model) renderView() string {
 }
 
 func (m *Model) renderHeader(w int) string {
+	if m.coverMode {
+		return m.renderCoverHeader(w)
+	}
 	left := gradientText(iconLogo+" xngxltuiplayer", colAccent, colAccent2)
 
 	right := dimStyle.Render(m.viewLabel()) + faintStyle.Render(currentGlyphs.Separator) +
@@ -56,6 +59,42 @@ func (m *Model) renderHeader(w int) string {
 		right += faintStyle.Render(currentGlyphs.Separator) + accent2Style.Render(fmt.Sprintf("%s %d", currentGlyphs.Down, active))
 	}
 	return fitLine(padBetween(left, right, w), w)
+}
+
+// renderCoverHeader replaces the library counters with the playback state in
+// cover mode, where the number of tracks in the library is irrelevant.
+func (m *Model) renderCoverHeader(w int) string {
+	left := gradientText(iconLogo+" xngxltuiplayer", colAccent, colAccent2)
+	state := strings.ToUpper(m.playbackStateText())
+	stateStyle := dimStyle
+	if state == "PLAYING" {
+		stateStyle = accent2Style
+	}
+	parts := []string{stateStyle.Render(state)}
+	if m.speed != 1 {
+		parts = append(parts, accent2Style.Render(audio.SpeedLabel(m.speed)))
+	}
+	parts = append(parts, dimStyle.Render(fmt.Sprintf("vol %d%%", m.volume)))
+	if m.shuffle {
+		parts = append(parts, dimStyle.Render("shuffle"))
+	}
+	right := strings.Join(parts, faintStyle.Render(currentGlyphs.Separator))
+	return fitLine(padBetween(left, right, w), w)
+}
+
+func (m *Model) playbackStateText() string {
+	switch {
+	case m.current == nil:
+		return "idle"
+	case m.ended:
+		return "ended"
+	case !m.loaded:
+		return "loading"
+	case m.paused:
+		return "paused"
+	default:
+		return "playing"
+	}
 }
 
 func (m *Model) renderContent(w, height int) string {
@@ -409,12 +448,12 @@ type coverLayoutSpec struct {
 	grid   bool
 	cover  coverPane
 	art    coverPane
+	info   coverPane
 	upNext coverPane
-	player coverPane
 }
 
-// coverLayout computes the cover screen: a wide left column with a combined
-// cover + spectrum pane above the player, and a narrower full-height UP NEXT
+// coverLayout computes the cover screen: a wide left NOW PLAYING panel with
+// the cover, track info and transport, and a narrower full-height UP NEXT
 // column on the right. It falls back to the compact layout when the panes
 // would be too small.
 func (m *Model) coverLayout(w, h int) coverLayoutSpec {
@@ -423,14 +462,12 @@ func (m *Model) coverLayout(w, h int) coverLayoutSpec {
 		return out
 	}
 	const (
-		margin  = 1
-		gap     = 1
-		bottomH = 6
+		margin = 1
+		gap    = 1
 	)
 	gridW := w - margin*2
 	gridH := h - 3
-	topH := gridH - gap - bottomH
-	if topH < 13 {
+	if gridH < 20 {
 		return out
 	}
 
@@ -443,41 +480,143 @@ func (m *Model) coverLayout(w, h int) coverLayoutSpec {
 	out.grid = true
 	x := (w - gridW) / 2
 	y := 1
-	out.cover = coverPane{left: x, top: y, width: leftW, height: topH}
+	out.cover = coverPane{left: x, top: y, width: leftW, height: gridH}
 	out.upNext = coverPane{left: x + leftW + gap, top: y, width: rightW, height: gridH}
-	out.player = coverPane{left: x, top: y + topH + gap, width: leftW, height: bottomH}
-	out.art, _ = coverArtPaneFor(out.cover)
+	out.art, out.info, _ = coverHeroPanes(out.cover)
 	return out
 }
 
-// coverArtPaneFor returns the centered art rectangle inside the combined
-// cover + spectrum pane, plus the number of rows reserved for the spectrum.
-func coverArtPaneFor(pane coverPane) (coverPane, int) {
+// coverHeroPanes splits the combined now-playing pane into a left-aligned
+// cover, an information block to its right and the rows reserved for the
+// spectrum underneath both. When the pane is too narrow for side-by-side
+// content the cover is centred and the info pane stays empty.
+func coverHeroPanes(pane coverPane) (art, info coverPane, spectrumRows int) {
 	innerW := pane.width - 4
 	innerH := pane.height - 2
 	if innerW < 1 || innerH < 1 {
-		return coverPane{}, 0
+		return coverPane{}, coverPane{}, 0
 	}
-	spectrumRows := minInt(7, maxInt(4, innerH/4))
-	if spectrumRows >= innerH {
-		spectrumRows = maxInt(1, innerH-1)
+	// Give tall windows a taller spectrum (8-10 rows) without letting it eat
+	// the cover on short ones. Tall panes also reserve one blank row between
+	// the artwork and the SPECTRUM label.
+	spectrumRows = minInt(10, maxInt(6, innerH/4+2))
+	if innerH >= 16 && spectrumRows < 10 {
+		spectrumRows++
+	}
+	if spectrumRows > innerH-5 {
+		spectrumRows = maxInt(2, innerH-5)
 	}
 	artAreaH := innerH - spectrumRows
-	artH := minInt(artAreaH, innerW/2)
+	if artAreaH < 4 {
+		return coverPane{}, coverPane{}, spectrumRows
+	}
+	const (
+		gap      = 3
+		minInfoW = 24
+	)
+	artH := minInt(artAreaH, (innerW-gap-minInfoW)/2)
+	if artH >= 4 {
+		artW := artH * 2
+		art = coverPane{
+			left:   pane.left + 2,
+			top:    pane.top + 1 + (artAreaH-artH)/2,
+			width:  artW,
+			height: artH,
+		}
+		info = coverPane{
+			left:   art.left + artW + gap,
+			top:    pane.top + 1,
+			width:  innerW - artW - gap,
+			height: artAreaH,
+		}
+		return art, info, spectrumRows
+	}
+
+	// Not enough room for the info block: centre the cover as before.
+	artH = minInt(artAreaH, innerW/2)
 	if artH < 4 {
-		return coverPane{}, spectrumRows
+		return coverPane{}, coverPane{}, spectrumRows
 	}
 	artW := artH * 2
-	return coverPane{
+	art = coverPane{
 		left:   pane.left + 2 + (innerW-artW)/2,
 		top:    pane.top + 1 + (artAreaH-artH)/2,
 		width:  artW,
 		height: artH,
-	}, spectrumRows
+	}
+	return art, coverPane{}, spectrumRows
 }
 
 func coverPaneContains(p coverPane, x, y int) bool {
 	return x >= p.left && x < p.left+p.width && y >= p.top && y < p.top+p.height
+}
+
+// coverHeroComposition positions the track metadata and the transport inside
+// the info column next to the cover. When the column is tall enough the
+// metadata is centred in the free space above the transport and the transport
+// hugs the bottom of the artwork; shorter panes fall back to a compact
+// centred stack. All row offsets are relative to the panel's inner area.
+type coverHeroComposition struct {
+	art          coverPane
+	info         coverPane
+	spectrumRows int
+	metaLines    []string
+	metaTop      int
+	progressTop  int
+	controlsTop  int
+	volumeTop    int
+}
+
+func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
+	art, info, rows := coverHeroPanes(pane)
+	out := coverHeroComposition{art: art, info: info, spectrumRows: rows}
+	if art.height <= 0 || info.width <= 0 {
+		return out
+	}
+	artTop := art.top - (pane.top + 1)
+	meta := m.coverInfoLines(info.width)
+	const transportH = 3
+	gap := 1
+	total := len(meta) + gap + transportH
+	if total > art.height {
+		meta = dropCoverInfoBlanks(meta)
+		gap = 0
+		total = len(meta) + transportH
+	}
+	if total > art.height {
+		keep := maxInt(1, art.height-transportH)
+		if keep > len(meta) {
+			keep = len(meta)
+		}
+		meta = meta[:keep]
+		total = len(meta) + transportH
+	}
+	if art.height-total >= 4 {
+		transportTop := artTop + art.height - transportH
+		metaAreaH := transportTop - artTop
+		out.metaTop = artTop + maxInt(0, (metaAreaH-len(meta))/2)
+		out.progressTop = transportTop
+		out.controlsTop = out.progressTop + 1
+		out.volumeTop = out.controlsTop + 1
+	} else {
+		top := artTop + maxInt(0, (art.height-total)/2)
+		out.metaTop = top
+		out.progressTop = top + len(meta) + gap
+		out.controlsTop = out.progressTop + 1
+		out.volumeTop = out.controlsTop + 1
+	}
+	out.metaLines = meta
+	return out
+}
+
+func dropCoverInfoBlanks(lines []string) []string {
+	out := lines[:0]
+	for _, line := range lines {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // coverArtSize returns the inner art dimensions and first art row for the
@@ -485,7 +624,7 @@ func coverPaneContains(p coverPane, x, y int) bool {
 // occupies rows artTop-1 through artTop+artH.
 func (m *Model) coverArtSize(w, h int) (artW, artH, artTop int) {
 	// header + frame + player card + hints + toast
-	available := h - 11
+	available := h - 12
 	if available < 4 {
 		available = 4
 	}
@@ -599,13 +738,10 @@ func (m *Model) renderCoverCompact(w, h int) string {
 func (m *Model) renderCoverGrid(w, h int, layout coverLayoutSpec) string {
 	cover := strings.Split(m.renderCoverNowPlayingPane(layout.cover), "\n")
 	upNext := strings.Split(m.renderCoverUpNextPane(layout.upNext), "\n")
-	player := strings.Split(m.renderCoverPlayerCard(layout.player.width), "\n")
 	blank := strings.Repeat(" ", w)
 
 	left := make([]string, 0, layout.upNext.height)
 	left = append(left, cover...)
-	left = append(left, strings.Repeat(" ", layout.cover.width))
-	left = append(left, player...)
 	leftBlank := strings.Repeat(" ", layout.cover.width)
 	rightBlank := strings.Repeat(" ", layout.upNext.width)
 	for len(left) < layout.upNext.height {
@@ -651,42 +787,62 @@ func (m *Model) renderCoverNowPlayingPane(pane coverPane) string {
 	if innerW < 1 || innerH < 1 {
 		return renderBox("Now playing", nil, pane.width, pane.height, colFaint, colAccent)
 	}
-	art, spectrumRows := coverArtPaneFor(pane)
-	artAreaH := innerH - spectrumRows
-	lines := make([]string, 0, innerH)
+	hero := m.coverHeroComposition(pane)
+	artAreaH := innerH - hero.spectrumRows
+	if artAreaH < 0 {
+		artAreaH = 0
+	}
+	rows := make([]string, artAreaH)
+	art := hero.art
 
 	if art.height > 0 {
-		topPad := maxInt(0, art.top-(pane.top+1))
-		for i := 0; i < topPad; i++ {
-			lines = append(lines, "")
-		}
+		artTop := art.top - (pane.top + 1)
+		artLeft := art.left - (pane.left + 2)
 		img := m.artImage
 		if img == nil {
 			img = placeholderImage(art.width, art.height*2)
 		}
-		for _, artLine := range renderArt(img, art.width, art.height) {
-			lines = append(lines, centerLine(artLine, innerW))
+		for i, artLine := range renderArt(img, art.width, art.height) {
+			y := artTop + i
+			if y < 0 || y >= len(rows) {
+				continue
+			}
+			rows[y] = strings.Repeat(" ", maxInt(0, artLeft)) + artLine
 		}
-	} else {
+	} else if artAreaH > 0 {
 		message := "No cover"
 		if m.current == nil {
 			message = "Nothing playing"
 		}
-		for i := 0; i < artAreaH/2; i++ {
-			lines = append(lines, "")
-		}
-		lines = append(lines, centerLine(dimStyle.Render(message), innerW))
-	}
-	for len(lines) < artAreaH {
-		lines = append(lines, "")
-	}
-	if len(lines) > artAreaH {
-		lines = lines[:artAreaH]
+		rows[artAreaH/2] = centerLine(dimStyle.Render(message), innerW)
 	}
 
-	lines = append(lines, fitLine(sectionStyle.Render("SPECTRUM")+dimStyle.Render("  live FFT"), innerW))
-	bars := renderSpectrum(m.spectrum, innerW, maxInt(0, spectrumRows-1))
-	lines = append(lines, bars...)
+	if hero.info.width > 0 {
+		infoLeft := hero.info.left - (pane.left + 2)
+		for i, line := range hero.metaLines {
+			placeCoverRow(rows, hero.metaTop+i, infoLeft, line)
+		}
+		placeCoverRow(rows, hero.progressTop, infoLeft,
+			m.progressLine(hero.info.width, 0, hero.info.width, ""))
+		placeCoverRow(rows, hero.controlsTop, infoLeft,
+			m.coverControlsLine(hero.info.width).line)
+		placeCoverRow(rows, hero.volumeTop, infoLeft, m.coverVolumeLine(hero.info.width))
+	}
+	for i := range rows {
+		rows[i] = fitLine(rows[i], innerW)
+	}
+
+	lines := make([]string, 0, innerH)
+	lines = append(lines, rows...)
+	if hero.spectrumRows > 0 {
+		if innerH >= 16 {
+			lines = append(lines, "")
+			hero.spectrumRows--
+		}
+		lines = append(lines, fitLine(sectionStyle.Render("SPECTRUM")+dimStyle.Render("  live FFT"), innerW))
+		bars := renderSpectrum(m.spectrum, innerW, maxInt(0, hero.spectrumRows-1))
+		lines = append(lines, bars...)
+	}
 	for len(lines) < innerH {
 		lines = append(lines, "")
 	}
@@ -696,8 +852,61 @@ func (m *Model) renderCoverNowPlayingPane(pane coverPane) string {
 	return renderBox("Now playing", lines, pane.width, pane.height, colFaint, colAccent)
 }
 
+// placeCoverRow writes a styled block at column left in a row that so far only
+// contains the artwork (or spaces). Art and info never overlap.
+func placeCoverRow(rows []string, y, left int, line string) {
+	if y < 0 || y >= len(rows) || line == "" {
+		return
+	}
+	row := rows[y]
+	if pad := left - ansi.StringWidth(row); pad > 0 {
+		row += strings.Repeat(" ", pad)
+	}
+	rows[y] = row + line
+}
+
+// coverInfoLines renders the large title / artist / metadata block next to the
+// cover in the cover-mode hero pane.
+func (m *Model) coverInfoLines(width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	if m.current == nil {
+		return []string{
+			titleStyle.Render(truncateText("Nothing playing", width)),
+			dimStyle.Render(truncateText("Select a track and press enter", width)),
+		}
+	}
+	lines := make([]string, 0, 7)
+	for _, line := range wrapText(cleanText(m.current.DisplayTitle()), width, 2) {
+		lines = append(lines, titleStyle.Render(line))
+	}
+	if artist := strings.TrimSpace(cleanText(m.current.DisplayArtist())); artist != "" {
+		lines = append(lines, accent2Style.Render(truncateText(artist, width)))
+	}
+	lines = append(lines, "")
+	if album := cleanText(m.current.DisplayAlbum()); album != "" {
+		lines = append(lines, dimStyle.Render(truncateText(album, width)))
+	}
+	details := make([]string, 0, 2)
+	if year := strings.TrimSpace(cleanText(m.current.Year)); year != "" {
+		details = append(details, year)
+	}
+	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(m.current.Path), "."))
+	if ext == "" {
+		ext = "AUDIO"
+	}
+	details = append(details, cleanText(ext))
+	lines = append(lines, faintStyle.Render(truncateText(strings.Join(details, currentGlyphs.Separator), width)))
+	if m.artLoading {
+		lines = append(lines, dimStyle.Render(truncateText("loading cover"+currentGlyphs.Ellipsis, width)))
+	}
+	return lines
+}
+
 func (m *Model) coverUpNextLimit(pane coverPane) int {
-	return minInt(14, maxInt(0, pane.height-3))
+	// One row for the position header, one for the footer.
+	return minInt(64, maxInt(0, pane.height-4))
 }
 
 func (m *Model) renderCoverUpNextPane(pane coverPane) string {
@@ -752,6 +961,13 @@ func (m *Model) renderCoverUpNextPane(pane coverPane) string {
 			lines = append(lines, row)
 		}
 	}
+
+	if footer := m.coverUpNextFooter(tracks, innerW); footer != "" {
+		for len(lines) < innerH-1 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, footer)
+	}
 	for len(lines) < innerH {
 		lines = append(lines, "")
 	}
@@ -759,6 +975,27 @@ func (m *Model) renderCoverUpNextPane(pane coverPane) string {
 		lines = lines[:innerH]
 	}
 	return renderBox("Up next", lines, pane.width, pane.height, colFaint, colAccent2)
+}
+
+// coverUpNextFooter reports whether the visible list was cut off and how many
+// tracks remain, so the panel never looks like it simply stopped.
+func (m *Model) coverUpNextFooter(tracks []model.Track, width int) string {
+	if len(tracks) == 0 || width <= 0 {
+		return ""
+	}
+	if m.repeat == "one" {
+		return fitLine(faintStyle.Render("repeat one"), width)
+	}
+	all := m.upNextTracks(maxInt(1, len(m.queue)+1))
+	hidden := len(all) - len(tracks)
+	label := "End of queue"
+	if hidden > 0 {
+		label = fmt.Sprintf("+%d more", hidden)
+	}
+	if m.repeat == "all" && width >= 30 {
+		return padBetween(faintStyle.Render(label), faintStyle.Render("repeat all"), width)
+	}
+	return fitLine(faintStyle.Render(label), width)
 }
 
 func (m *Model) coverUpNextTrackAt(pane coverPane, x, y int) (model.Track, bool) {
@@ -792,7 +1029,7 @@ func (m *Model) coverCardGeometry(w, h int) (left, top, width, height int) {
 	}
 	left = maxInt(0, (w-width)/2)
 	top = artTop + artH + 1
-	height = 6
+	height = 7
 	return
 }
 
@@ -803,27 +1040,43 @@ func (m *Model) renderCoverPlayerCard(width int) string {
 		m.coverCardMetaLine(innerW),
 		m.progressLine(innerW, 0, innerW, ""),
 		m.coverControlsLine(innerW).line,
+		m.coverVolumeLine(innerW),
 	}
-	return renderBox("Player", lines, width, 6, colFaint, colAccent)
+	return renderBox("Player", lines, width, 7, colFaint, colAccent)
 }
 
 func (m *Model) coverCardTitleLine(width int) string {
 	if m.current == nil {
 		return centerLine(dimStyle.Render("Nothing playing"), width)
 	}
-	title := titleStyle.Render(truncateText(cleanText(m.current.DisplayTitle()), width))
+	title := cleanText(m.current.DisplayTitle())
 	artist := strings.TrimSpace(cleanText(m.current.Artist))
-	if artist == "" || width < 24 {
-		return fitLine(title, width)
+	queue := m.coverQueueText()
+	avail := width - ansi.StringWidth(queue) - 1
+
+	left := ""
+	if artist != "" && avail >= 16 {
+		artistBudget := minInt(ansi.StringWidth(artist), maxInt(6, avail/3))
+		titleBudget := avail - artistBudget - 3
+		if titleBudget >= 8 {
+			left = titleStyle.Render(truncateText(title, titleBudget)) +
+				faintStyle.Render(" "+currentGlyphs.Dash+" ") +
+				accent2Style.Render(truncateText(artist, artistBudget))
+		}
 	}
-	right := accent2Style.Render(truncateText(artist, maxInt(1, width/2)))
-	return padBetween(title, right, width)
+	if left == "" {
+		left = titleStyle.Render(truncateText(title, maxInt(1, avail)))
+	}
+	return padBetween(left, faintStyle.Render(truncateText(queue, width)), width)
 }
 
 func (m *Model) coverCardMetaLine(width int) string {
 	meta := dimStyle.Render(truncateText(m.coverMetaText(), width))
-	queue := faintStyle.Render(truncateText(m.coverQueueText(), width))
-	return padBetween(meta, queue, width)
+	status := strings.ToUpper(m.playbackStateText())
+	if m.speed != 1 {
+		status += currentGlyphs.Separator + audio.SpeedLabel(m.speed)
+	}
+	return padBetween(meta, faintStyle.Render(truncateText(status, width)), width)
 }
 
 func (m *Model) coverMetaText() string {
@@ -949,20 +1202,6 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 	center := prevText + strings.Repeat(" ", gap) + playText + strings.Repeat(" ", gap) + nextText
 	centerW := ansi.StringWidth(center)
 
-	right := ""
-	rightW := 0
-	if m.speed != 1 {
-		right = accent2Style.Render(audio.SpeedLabel(m.speed))
-		rightW = ansi.StringWidth(right)
-	}
-	vol := dimStyle.Render(fmt.Sprintf("vol %d%%", m.volume))
-	if rightW > 0 {
-		right += "  "
-		rightW += 2
-	}
-	right += vol
-	rightW += ansi.StringWidth(vol)
-
 	centerStart := maxInt(0, (width-centerW)/2)
 	if centerStart < leftW+1 {
 		left = ""
@@ -970,11 +1209,6 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 		out.shuffleStart, out.shuffleEnd = -1, -1
 		out.repeatStart, out.repeatEnd = -1, -1
 		centerStart = maxInt(0, (width-centerW)/2)
-	}
-	rightStart := width - rightW
-	if rightW == 0 || centerStart+centerW > rightStart-1 {
-		right = ""
-		rightW = 0
 	}
 
 	var b strings.Builder
@@ -985,10 +1219,6 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 		b.WriteString(strings.Repeat(" ", centerStart))
 	}
 	b.WriteString(center)
-	if rightW > 0 {
-		b.WriteString(strings.Repeat(" ", maxInt(0, rightStart-(centerStart+centerW))))
-		b.WriteString(right)
-	}
 	out.line = fitLine(b.String(), width)
 	out.prevStart = centerStart
 	out.prevEnd = centerStart + ansi.StringWidth(prevText)
@@ -997,6 +1227,13 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 	out.nextStart = out.playEnd + gap
 	out.nextEnd = out.nextStart + ansi.StringWidth(nextText)
 	return out
+}
+
+// coverVolumeLine renders the volume slider as its own row under the
+// transport so it can stay wide and mouse-friendly in the hero block.
+func (m *Model) coverVolumeLine(width int) string {
+	group, _, _ := m.volumeGroup(width)
+	return fitLine(group, width)
 }
 
 func (m *Model) renderCoverPanel(width, height int) []string {
@@ -1581,8 +1818,12 @@ func (m *Model) playerProgressGeometry(width int) (start, barWidth int) {
 func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
 	layout := m.coverLayout(width, m.height)
 	if layout.grid {
-		innerW := maxInt(1, layout.player.width-4)
-		contentX := layout.player.left + 2
+		hero := m.coverHeroComposition(layout.cover)
+		innerW := maxInt(1, hero.info.width)
+		contentX := hero.info.left
+		if hero.info.width <= 0 {
+			return 0, maxInt(1, width)
+		}
 		rightLabel := model.FormatDuration(m.duration)
 		timeW := maxInt(7, ansi.StringWidth(rightLabel))
 		if innerW < timeW*2+3 {
@@ -1610,6 +1851,42 @@ func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
 		barWidth = 1
 	}
 	return contentX + timeW + 1, barWidth
+}
+
+// coverVolumeBarBounds returns the terminal x range of the volume slider in
+// cover mode. A negative range means the current layout is too narrow for a
+// slider and only the percentage is shown.
+func (m *Model) coverVolumeBarBounds(width int) (start, end int) {
+	innerW := 0
+	contentX := 0
+	layout := m.coverLayout(width, m.height)
+	if layout.grid {
+		hero := m.coverHeroComposition(layout.cover)
+		if hero.info.width <= 0 {
+			return -1, -1
+		}
+		innerW = hero.info.width
+		contentX = hero.info.left
+	} else {
+		cardLeft, _, cardW, _ := m.coverCardGeometry(width, m.height)
+		if cardW <= 0 {
+			return -1, -1
+		}
+		innerW = cardW - 4
+		contentX = cardLeft + 2
+	}
+	if innerW < 17 {
+		return -1, -1
+	}
+	barW := innerW - 11
+	if barW > 30 {
+		barW = 30
+	}
+	if barW < 6 {
+		return -1, -1
+	}
+	start = contentX + 5
+	return start, start + barW
 }
 
 const volumeSteps = 7
