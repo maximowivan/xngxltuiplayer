@@ -260,9 +260,10 @@ type Model struct {
 	artLoading bool
 	artErr     error
 
-	queue          []string
-	queueIndex     int
-	shuffleHistory []int
+	queue        []string
+	queueIndex   int
+	shuffleOrder []int
+	shufflePos   int
 
 	jobs           []download.Job
 	jobSeen        map[int]download.Status
@@ -910,10 +911,63 @@ func (m *Model) buildQueueFor(path string) {
 	}
 	m.queueIndex = idx
 	if m.shuffle {
-		m.shuffleHistory = []int{idx}
+		m.rebuildShuffleOrder(idx)
 	} else {
-		m.shuffleHistory = nil
+		m.shuffleOrder = nil
+		m.shufflePos = 0
 	}
+}
+
+// rebuildShuffleOrder creates the real playback order used while shuffle is
+// on. The current track stays first; the rest are randomized once.
+func (m *Model) rebuildShuffleOrder(start int) {
+	m.shuffleOrder = m.shuffleOrder[:0]
+	m.shufflePos = 0
+	if len(m.queue) == 0 {
+		return
+	}
+	if start < 0 || start >= len(m.queue) {
+		start = 0
+	}
+	rest := make([]int, 0, len(m.queue)-1)
+	for i := range m.queue {
+		if i != start {
+			rest = append(rest, i)
+		}
+	}
+	rand.Shuffle(len(rest), func(i, j int) {
+		rest[i], rest[j] = rest[j], rest[i]
+	})
+	m.shuffleOrder = append(m.shuffleOrder, start)
+	m.shuffleOrder = append(m.shuffleOrder, rest...)
+}
+
+func (m *Model) shufflePosition(index int) int {
+	for i, queueIndex := range m.shuffleOrder {
+		if queueIndex == index {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) ensureShuffleOrder() int {
+	if !m.shuffle {
+		return -1
+	}
+	if len(m.shuffleOrder) != len(m.queue) {
+		m.rebuildShuffleOrder(m.queueIndex)
+	}
+	pos := m.shufflePos
+	if pos < 0 || pos >= len(m.shuffleOrder) || m.shuffleOrder[pos] != m.queueIndex {
+		pos = m.shufflePosition(m.queueIndex)
+		if pos < 0 {
+			m.rebuildShuffleOrder(m.queueIndex)
+			pos = 0
+		}
+		m.shufflePos = pos
+	}
+	return pos
 }
 
 func (m *Model) playTrack(t model.Track, start time.Duration, rebuildQueue bool) (tea.Cmd, bool) {
@@ -986,37 +1040,17 @@ func (m *Model) nextIndex() int {
 		return -1
 	}
 	if m.shuffle {
-		if m.queueIndex >= 0 && !containsInt(m.shuffleHistory, m.queueIndex) {
-			m.shuffleHistory = append(m.shuffleHistory, m.queueIndex)
-		}
-		if len(m.queue) == 1 {
-			if m.repeat == "all" {
-				return 0
-			}
+		pos := m.ensureShuffleOrder()
+		if pos < 0 {
 			return -1
 		}
-		candidates := make([]int, 0, len(m.queue))
-		for i := range m.queue {
-			if i == m.queueIndex || containsInt(m.shuffleHistory, i) {
-				continue
-			}
-			candidates = append(candidates, i)
+		if pos+1 < len(m.shuffleOrder) {
+			return m.shuffleOrder[pos+1]
 		}
-		if len(candidates) == 0 {
-			if m.repeat != "all" {
-				return -1
-			}
-			m.shuffleHistory = nil
-			for i := range m.queue {
-				if i != m.queueIndex {
-					candidates = append(candidates, i)
-				}
-			}
+		if m.repeat == "all" {
+			return m.shuffleOrder[0]
 		}
-		if len(candidates) == 0 {
-			return -1
-		}
-		return candidates[rand.Intn(len(candidates))]
+		return -1
 	}
 	if m.queueIndex+1 < len(m.queue) {
 		return m.queueIndex + 1
@@ -1032,10 +1066,15 @@ func (m *Model) prevIndex() int {
 		return -1
 	}
 	if m.shuffle {
-		if len(m.shuffleHistory) >= 2 {
-			idx := m.shuffleHistory[len(m.shuffleHistory)-2]
-			m.shuffleHistory = m.shuffleHistory[:len(m.shuffleHistory)-1]
-			return idx
+		pos := m.ensureShuffleOrder()
+		if pos < 0 {
+			return -1
+		}
+		if pos > 0 {
+			return m.shuffleOrder[pos-1]
+		}
+		if m.repeat == "all" {
+			return m.shuffleOrder[len(m.shuffleOrder)-1]
 		}
 		return -1
 	}
@@ -1062,8 +1101,12 @@ func (m *Model) playQueueIndex(idx int) tea.Cmd {
 		return nil
 	}
 	m.queueIndex = idx
-	if m.shuffle && !containsInt(m.shuffleHistory, idx) {
-		m.shuffleHistory = append(m.shuffleHistory, idx)
+	if m.shuffle {
+		if pos := m.shufflePosition(idx); pos >= 0 {
+			m.shufflePos = pos
+		} else {
+			m.rebuildShuffleOrder(idx)
+		}
 	}
 	return cmd
 }
@@ -1206,8 +1249,12 @@ func (m *Model) maybeCrossfade() tea.Cmd {
 	}
 
 	m.queueIndex = idx
-	if m.shuffle && !containsInt(m.shuffleHistory, idx) {
-		m.shuffleHistory = append(m.shuffleHistory, idx)
+	if m.shuffle {
+		if pos := m.shufflePosition(idx); pos >= 0 {
+			m.shufflePos = pos
+		} else {
+			m.rebuildShuffleOrder(idx)
+		}
 	}
 	cp := next
 	m.current = &cp
@@ -1547,9 +1594,11 @@ func (m *Model) applySort() {
 
 func (m *Model) toggleShuffle() {
 	m.shuffle = !m.shuffle
-	m.shuffleHistory = nil
-	if m.shuffle && m.queueIndex >= 0 {
-		m.shuffleHistory = []int{m.queueIndex}
+	if m.shuffle {
+		m.rebuildShuffleOrder(m.queueIndex)
+	} else {
+		m.shuffleOrder = nil
+		m.shufflePos = 0
 	}
 	m.markDirty()
 	state := "off"
@@ -1779,9 +1828,11 @@ func (m *Model) deleteTrackNow() tea.Cmd {
 		if len(m.queue) == 0 {
 			m.queueIndex = 0
 		}
-		m.shuffleHistory = nil
-		if m.shuffle && len(m.queue) > 0 {
-			m.shuffleHistory = []int{m.queueIndex}
+		if m.shuffle {
+			m.rebuildShuffleOrder(m.queueIndex)
+		} else {
+			m.shuffleOrder = nil
+			m.shufflePos = 0
 		}
 	}
 

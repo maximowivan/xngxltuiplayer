@@ -267,11 +267,40 @@ func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	// The compact player is bottom-aligned: title, progress, hints, toast.
-	if msg.Y == h-3 {
-		m.seekFromProgressBar(msg.X, w)
+
+	cardLeft, cardTop, cardW, cardH := m.coverCardGeometry(w, h)
+	if cardW > 0 && msg.Y >= cardTop && msg.Y < cardTop+cardH &&
+		msg.X >= cardLeft && msg.X < cardLeft+cardW {
+		innerX := msg.X - (cardLeft + 2)
+		switch msg.Y - cardTop {
+		case 3:
+			m.seekFromProgressBar(msg.X, w)
+		case 4:
+			return m, m.handleCoverControlClick(innerX, cardW-4)
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m *Model) handleCoverControlClick(x, innerW int) tea.Cmd {
+	if innerW <= 0 {
+		return nil
+	}
+	layout := m.coverControlsLine(innerW)
+	switch {
+	case layout.shuffleStart >= 0 && x >= layout.shuffleStart && x < layout.shuffleEnd:
+		m.toggleShuffle()
+	case layout.repeatStart >= 0 && x >= layout.repeatStart && x < layout.repeatEnd:
+		m.cycleRepeat()
+	case layout.prevStart >= 0 && x >= layout.prevStart-1 && x < layout.prevEnd+1:
+		return m.prevTrack()
+	case layout.playStart >= 0 && x >= layout.playStart-1 && x < layout.playEnd+1:
+		return m.togglePlay()
+	case layout.nextStart >= 0 && x >= layout.nextStart-1 && x < layout.nextEnd+1:
+		return m.nextTrack()
+	}
+	return nil
 }
 
 func (m *Model) seekFromProgressBar(x, width int) {

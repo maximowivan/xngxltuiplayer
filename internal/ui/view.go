@@ -402,8 +402,8 @@ func (m *Model) rightArtSize(innerW, innerH int) (artW, artH int) {
 // mode. The art is wrapped in a one-cell frame, so the frame occupies rows
 // artTop-1 through artTop+artH.
 func (m *Model) coverArtSize(w, h int) (artW, artH, artTop int) {
-	// header + frame + metadata/status/title/progress/hints/toast
-	available := h - 9
+	// header + frame + player card + hints + toast
+	available := h - 11
 	if available < 4 {
 		available = 4
 	}
@@ -478,29 +478,20 @@ func (m *Model) renderCover(w, h int) string {
 		}
 	}
 
-	for len(lines) < h-6 {
+	cardLeft, cardTop, cardW, _ := m.coverCardGeometry(w, h)
+	if cardW > 0 {
+		for len(lines) < cardTop {
+			lines = append(lines, blank)
+		}
+		card := m.renderCoverPlayerCard(cardW)
+		for _, cardLine := range strings.Split(card, "\n") {
+			lines = append(lines, fitLine(strings.Repeat(" ", cardLeft)+cardLine, w))
+		}
+	}
+
+	for len(lines) < h-2 {
 		lines = append(lines, blank)
 	}
-	lines = append(lines, centerLine(m.coverMetaLine(w), w))
-	lines = append(lines, centerLine(m.coverQueueLine(w, panelShown), w))
-
-	title := "Nothing playing"
-	icon := currentGlyphs.Stop
-	iconStyle := faintStyle
-	if m.current != nil {
-		title = cleanText(m.current.DisplayTitle())
-		if artist := strings.TrimSpace(cleanText(m.current.Artist)); artist != "" {
-			title += " " + currentGlyphs.Dash + " " + artist
-		}
-		icon = iconPause
-		iconStyle = accent2Style
-		if m.loaded && !m.paused && !m.ended {
-			icon = iconPlay
-		}
-	}
-	titleLine := iconStyle.Render(icon) + " " + titleStyle.Render(truncateText(title, maxInt(10, w-6)))
-	lines = append(lines, centerLine(titleLine, w))
-	lines = append(lines, m.coverProgressLine(w))
 	lines = append(lines, fitLine(m.renderCoverHints(), w))
 	lines = append(lines, m.renderToastLine(w))
 
@@ -513,7 +504,55 @@ func (m *Model) renderCover(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) coverMetaLine(w int) string {
+func (m *Model) coverCardGeometry(w, h int) (left, top, width, height int) {
+	artW, artH, artTop := m.coverArtSize(w, h)
+	if artW <= 0 || artH <= 0 {
+		return 0, 0, 0, 0
+	}
+	width = maxInt(artW+2, 44)
+	if width > w-4 {
+		width = w - 4
+	}
+	if width < 20 {
+		return 0, 0, 0, 0
+	}
+	left = maxInt(0, (w-width)/2)
+	top = artTop + artH + 1
+	height = 6
+	return
+}
+
+func (m *Model) renderCoverPlayerCard(width int) string {
+	innerW := maxInt(1, width-4)
+	lines := []string{
+		m.coverCardTitleLine(innerW),
+		m.coverCardMetaLine(innerW),
+		m.progressLine(innerW, 0, innerW, ""),
+		m.coverControlsLine(innerW).line,
+	}
+	return renderBox("Player", lines, width, 6, colFaint, colAccent)
+}
+
+func (m *Model) coverCardTitleLine(width int) string {
+	if m.current == nil {
+		return centerLine(dimStyle.Render("Nothing playing"), width)
+	}
+	title := titleStyle.Render(truncateText(cleanText(m.current.DisplayTitle()), width))
+	artist := strings.TrimSpace(cleanText(m.current.Artist))
+	if artist == "" || width < 24 {
+		return fitLine(title, width)
+	}
+	right := accent2Style.Render(truncateText(artist, maxInt(1, width/2)))
+	return padBetween(title, right, width)
+}
+
+func (m *Model) coverCardMetaLine(width int) string {
+	meta := dimStyle.Render(truncateText(m.coverMetaText(), width))
+	queue := faintStyle.Render(truncateText(m.coverQueueText(), width))
+	return padBetween(meta, queue, width)
+}
+
+func (m *Model) coverMetaText() string {
 	if m.current == nil {
 		return ""
 	}
@@ -529,56 +568,161 @@ func (m *Model) coverMetaLine(w int) string {
 		ext = "AUDIO"
 	}
 	parts = append(parts, cleanText(ext))
-	return dimStyle.Render(truncateText(strings.Join(parts, " "+currentGlyphs.Separator+" "), w))
+	return strings.Join(parts, " "+currentGlyphs.Separator+" ")
 }
 
-func (m *Model) coverQueueLine(w int, panel bool) string {
+func (m *Model) coverQueueText() string {
 	if m.current == nil {
 		return ""
 	}
-	sep := " " + currentGlyphs.Separator + " "
-	if panel {
-		parts := make([]string, 0, 4)
-		if len(m.queue) > 0 {
-			pos := m.queueIndex
-			if pos < 0 || pos >= len(m.queue) {
-				pos = m.queueIndexFor(m.current.Path)
-			}
-			if pos >= 0 {
-				parts = append(parts, fmt.Sprintf("queue %d/%d", pos+1, len(m.queue)))
-			} else {
-				parts = append(parts, "queue")
-			}
-		} else {
-			parts = append(parts, "queue empty")
+	if len(m.queue) == 0 {
+		return "queue empty"
+	}
+	if m.shuffle {
+		pos := m.shufflePos
+		if pos < 0 || pos >= len(m.shuffleOrder) || len(m.shuffleOrder) != len(m.queue) {
+			pos = m.shufflePosition(m.queueIndex)
 		}
-		if m.shuffle {
-			parts = append(parts, "shuffle")
+		if pos >= 0 {
+			return fmt.Sprintf("shuffle %d/%d", pos+1, len(m.shuffleOrder))
 		}
-		if m.repeat != "off" {
-			parts = append(parts, "repeat "+m.repeat)
-		}
-		parts = append(parts, audio.SpeedLabel(m.speed))
-		return dimStyle.Render(strings.Join(parts, sep))
+	}
+	pos := m.queueIndex
+	if pos < 0 || pos >= len(m.queue) {
+		pos = m.queueIndexFor(m.current.Path)
+	}
+	if pos >= 0 {
+		return fmt.Sprintf("queue %d/%d", pos+1, len(m.queue))
+	}
+	return "queue"
+}
+
+type coverControlLayout struct {
+	line         string
+	shuffleStart int
+	shuffleEnd   int
+	repeatStart  int
+	repeatEnd    int
+	prevStart    int
+	prevEnd      int
+	playStart    int
+	playEnd      int
+	nextStart    int
+	nextEnd      int
+}
+
+func (m *Model) coverControlsLine(width int) coverControlLayout {
+	out := coverControlLayout{
+		shuffleStart: -1,
+		shuffleEnd:   -1,
+		repeatStart:  -1,
+		repeatEnd:    -1,
+		prevStart:    -1,
+		prevEnd:      -1,
+		playStart:    -1,
+		playEnd:      -1,
+		nextStart:    -1,
+		nextEnd:      -1,
+	}
+	if width <= 0 {
+		return out
+	}
+	gap := 2
+
+	shuffleStyle := dimStyle
+	if m.shuffle {
+		shuffleStyle = accent2Style.Bold(true)
+	}
+	repeatStyle := dimStyle
+	if m.repeat != "off" {
+		repeatStyle = accent2Style.Bold(true)
 	}
 
-	tracks := m.upNextTracks(1)
-	if len(tracks) == 0 {
-		return faintStyle.Render("Queue is empty")
+	left := ""
+	leftW := 0
+	if iconShuffle != "" {
+		out.shuffleStart = 0
+		out.shuffleEnd = ansi.StringWidth(iconShuffle)
+		left += shuffleStyle.Render(iconShuffle)
+		leftW = out.shuffleEnd
 	}
-	track := tracks[0]
-	label := cleanText(track.DisplayTitle())
-	if artist := strings.TrimSpace(cleanText(track.Artist)); artist != "" {
-		label = artist + " " + currentGlyphs.Dash + " " + label
+	repeatIcon := iconRepeat
+	if m.repeat == "one" {
+		repeatIcon += " " + iconRepeatOne
 	}
-	suffix := ""
-	if m.shuffle {
-		suffix = sep + "shuffle"
+	if repeatIcon != "" {
+		if leftW > 0 {
+			left += strings.Repeat(" ", gap)
+			leftW += gap
+		}
+		out.repeatStart = leftW
+		out.repeatEnd = leftW + ansi.StringWidth(repeatIcon)
+		left += repeatStyle.Render(repeatIcon)
+		leftW = out.repeatEnd
 	}
-	avail := w - ansi.StringWidth("Up next: ") - ansi.StringWidth(suffix)
-	return faintStyle.Render("Up next: ") +
-		textStyle.Render(truncateText(label, maxInt(0, avail))) +
-		faintStyle.Render(suffix)
+
+	playIcon := iconPlayButton
+	playStyle := accent2Style.Bold(true)
+	if m.current == nil {
+		playStyle = faintStyle
+	}
+	if m.current != nil && m.loaded && !m.paused && !m.ended {
+		playIcon = iconPauseButton
+	}
+	prevText := keyStyle.Render(iconPrev)
+	playText := playStyle.Render(playIcon)
+	nextText := keyStyle.Render(iconNext)
+	center := prevText + strings.Repeat(" ", gap) + playText + strings.Repeat(" ", gap) + nextText
+	centerW := ansi.StringWidth(center)
+
+	right := ""
+	rightW := 0
+	if m.speed != 1 {
+		right = accent2Style.Render(audio.SpeedLabel(m.speed))
+		rightW = ansi.StringWidth(right)
+	}
+	vol := dimStyle.Render(fmt.Sprintf("vol %d%%", m.volume))
+	if rightW > 0 {
+		right += "  "
+		rightW += 2
+	}
+	right += vol
+	rightW += ansi.StringWidth(vol)
+
+	centerStart := maxInt(0, (width-centerW)/2)
+	if centerStart < leftW+1 {
+		left = ""
+		leftW = 0
+		out.shuffleStart, out.shuffleEnd = -1, -1
+		out.repeatStart, out.repeatEnd = -1, -1
+		centerStart = maxInt(0, (width-centerW)/2)
+	}
+	rightStart := width - rightW
+	if rightW == 0 || centerStart+centerW > rightStart-1 {
+		right = ""
+		rightW = 0
+	}
+
+	var b strings.Builder
+	if leftW > 0 {
+		b.WriteString(left)
+		b.WriteString(strings.Repeat(" ", maxInt(0, centerStart-leftW)))
+	} else {
+		b.WriteString(strings.Repeat(" ", centerStart))
+	}
+	b.WriteString(center)
+	if rightW > 0 {
+		b.WriteString(strings.Repeat(" ", maxInt(0, rightStart-(centerStart+centerW))))
+		b.WriteString(right)
+	}
+	out.line = fitLine(b.String(), width)
+	out.prevStart = centerStart
+	out.prevEnd = centerStart + ansi.StringWidth(prevText)
+	out.playStart = out.prevEnd + gap
+	out.playEnd = out.playStart + ansi.StringWidth(playText)
+	out.nextStart = out.playEnd + gap
+	out.nextEnd = out.nextStart + ansi.StringWidth(nextText)
+	return out
 }
 
 func (m *Model) renderCoverPanel(width, height int) []string {
@@ -589,11 +733,25 @@ func (m *Model) renderCoverPanel(width, height int) []string {
 	header := sectionStyle.Render("UP NEXT")
 	if len(m.queue) > 0 && m.current != nil {
 		pos := m.queueIndex
-		if pos < 0 || pos >= len(m.queue) {
-			pos = m.queueIndexFor(m.current.Path)
+		label := ""
+		if m.shuffle {
+			pos = m.shufflePos
+			if pos < 0 || pos >= len(m.shuffleOrder) || len(m.shuffleOrder) != len(m.queue) {
+				pos = m.shufflePosition(m.queueIndex)
+			}
+			if pos >= 0 {
+				label = fmt.Sprintf("%d/%d", pos+1, len(m.shuffleOrder))
+			}
+		} else {
+			if pos < 0 || pos >= len(m.queue) {
+				pos = m.queueIndexFor(m.current.Path)
+			}
+			if pos >= 0 {
+				label = fmt.Sprintf("%d/%d", pos+1, len(m.queue))
+			}
 		}
-		if pos >= 0 {
-			header = padBetween(header, faintStyle.Render(fmt.Sprintf("%d/%d", pos+1, len(m.queue))), width)
+		if label != "" {
+			header = padBetween(header, faintStyle.Render(label), width)
 		}
 	}
 	lines = append(lines, fitLine(header, width), "")
@@ -626,12 +784,51 @@ func (m *Model) renderCoverPanel(width, height int) []string {
 	return lines
 }
 
-// upNextTracks returns the tracks that follow the current one in queue order.
-// With shuffle enabled the order is only indicative, so the UI labels it.
+// upNextTracks returns the tracks that will actually follow the current one.
+// With shuffle enabled it follows the precomputed shuffle order, so the list
+// matches playback instead of showing the raw queue.
 func (m *Model) upNextTracks(limit int) []model.Track {
 	if limit <= 0 || len(m.queue) == 0 || m.current == nil {
 		return nil
 	}
+	if m.repeat == "one" {
+		return []model.Track{*m.current}
+	}
+	byPath := make(map[string]model.Track, len(m.tracks))
+	for _, track := range m.tracks {
+		byPath[trackKey(track.Path)] = track
+	}
+	out := make([]model.Track, 0, limit)
+
+	if m.shuffle {
+		pos := m.ensureShuffleOrder()
+		if pos < 0 {
+			return nil
+		}
+		for offset := 1; offset < len(m.shuffleOrder) && len(out) < limit; offset++ {
+			orderIndex := pos + offset
+			if orderIndex >= len(m.shuffleOrder) {
+				if m.repeat != "all" {
+					break
+				}
+				orderIndex %= len(m.shuffleOrder)
+				if orderIndex == pos {
+					break
+				}
+			}
+			queueIndex := m.shuffleOrder[orderIndex]
+			if queueIndex < 0 || queueIndex >= len(m.queue) {
+				continue
+			}
+			track, ok := byPath[trackKey(m.queue[queueIndex])]
+			if !ok {
+				continue
+			}
+			out = append(out, track)
+		}
+		return out
+	}
+
 	start := m.queueIndex
 	if start < 0 || start >= len(m.queue) || trackKey(m.queue[start]) != trackKey(m.current.Path) {
 		start = m.queueIndexFor(m.current.Path)
@@ -639,11 +836,6 @@ func (m *Model) upNextTracks(limit int) []model.Track {
 	if start < 0 {
 		return nil
 	}
-	byPath := make(map[string]model.Track, len(m.tracks))
-	for _, track := range m.tracks {
-		byPath[trackKey(track.Path)] = track
-	}
-	out := make([]model.Track, 0, limit)
 	for offset := 1; offset < len(m.queue) && len(out) < limit; offset++ {
 		idx := start + offset
 		if idx >= len(m.queue) {
@@ -959,14 +1151,6 @@ func (m *Model) playerProgressRight(innerW, segEnd int) string {
 
 // coverProgressLine is used by the full-screen cover, where there is no player
 // box and the bar can use the whole terminal width.
-func (m *Model) coverProgressLine(w int) string {
-	artW, _, _ := m.coverArtSize(w, m.height)
-	if artW <= 0 {
-		return m.progressLine(w, 0, w, "")
-	}
-	return m.progressLine(w, maxInt(0, (w-artW)/2), artW, "")
-}
-
 func (m *Model) progressLine(innerW, start, segW int, rightText string) string {
 	pos := m.currentPosition()
 	dur := m.duration
@@ -1121,23 +1305,22 @@ func (m *Model) playerProgressGeometry(width int) (start, barWidth int) {
 // coverProgressGeometry returns the terminal x range of the seek bar in cover
 // mode.
 func (m *Model) coverProgressGeometry(width int) (start, barWidth int) {
-	artW, _, _ := m.coverArtSize(width, m.height)
-	segStart := 0
-	segW := width
-	if artW > 0 {
-		segStart = maxInt(0, (width-artW)/2)
-		segW = artW
+	cardLeft, _, cardW, _ := m.coverCardGeometry(width, m.height)
+	if cardW <= 0 {
+		return 0, maxInt(1, width)
 	}
+	innerW := maxInt(1, cardW-4)
+	contentX := cardLeft + 2
 	rightLabel := model.FormatDuration(m.duration)
 	timeW := maxInt(7, ansi.StringWidth(rightLabel))
-	if segW < timeW*2+3 {
-		return segStart, maxInt(1, segW)
+	if innerW < timeW*2+3 {
+		return contentX, maxInt(1, innerW)
 	}
-	barWidth = segW - timeW*2 - 2
+	barWidth = innerW - timeW*2 - 2
 	if barWidth < 1 {
 		barWidth = 1
 	}
-	return segStart + timeW + 1, barWidth
+	return contentX + timeW + 1, barWidth
 }
 
 const volumeSteps = 7
