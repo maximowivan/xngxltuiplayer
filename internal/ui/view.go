@@ -551,10 +551,9 @@ func coverPaneContains(p coverPane, x, y int) bool {
 }
 
 // coverHeroComposition positions the track metadata and the transport inside
-// the info column next to the cover. When the column is tall enough the
-// metadata is centred in the free space above the transport and the transport
-// hugs the bottom of the artwork; shorter panes fall back to a compact
-// centred stack. All row offsets are relative to the panel's inner area.
+// the info column next to the cover. The whole block is centred vertically
+// against the artwork; shorter panes drop the spacer and then trim metadata
+// lines. All row offsets are relative to the panel's inner area.
 type coverHeroComposition struct {
 	art          coverPane
 	info         coverPane
@@ -575,44 +574,24 @@ func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
 	artTop := art.top - (pane.top + 1)
 	meta := m.coverInfoLines(info.width)
 	const transportH = 4
-	if len(meta)+1+transportH > art.height {
-		meta = dropCoverInfoBlanks(meta)
+	gap := 1
+	if len(meta)+gap+transportH > art.height {
+		gap = 0
 	}
-	if len(meta)+transportH > art.height {
-		keep := maxInt(1, art.height-transportH)
+	if len(meta)+gap+transportH > art.height {
+		keep := maxInt(1, art.height-gap-transportH)
 		if keep > len(meta) {
 			keep = len(meta)
 		}
 		meta = meta[:keep]
 	}
-	// Anchor the volume row to the bottom edge of the artwork. The controls and
-	// progress sit just above it, with a blank row between controls and volume.
-	if art.height >= len(meta)+transportH+1 {
-		out.volumeTop = artTop + art.height - 1
-		out.controlsTop = out.volumeTop - 2
-		out.progressTop = out.controlsTop - 1
-		out.metaTop = out.progressTop - len(meta) - 1
-		if out.metaTop < artTop {
-			out.metaTop = artTop
-		}
-	} else {
-		top := artTop + maxInt(0, (art.height-len(meta)-transportH)/2)
-		out.metaTop = top
-		out.progressTop = top + len(meta) + 1
-		out.controlsTop = out.progressTop + 1
-		out.volumeTop = out.controlsTop + 2
-	}
+	total := len(meta) + gap + transportH
+	top := artTop + maxInt(0, (art.height-total)/2)
+	out.metaTop = top
+	out.progressTop = top + len(meta) + gap
+	out.controlsTop = out.progressTop + 1
+	out.volumeTop = out.controlsTop + 2
 	out.metaLines = meta
-	return out
-}
-
-func dropCoverInfoBlanks(lines []string) []string {
-	out := lines[:0]
-	for _, line := range lines {
-		if line != "" {
-			out = append(out, line)
-		}
-	}
 	return out
 }
 
