@@ -591,8 +591,10 @@ func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
 		out.volumeTop = artTop + art.height - 1
 		out.controlsTop = out.volumeTop - 2
 		out.progressTop = out.controlsTop - 1
-		metaArea := out.progressTop - artTop
-		out.metaTop = artTop + maxInt(0, (metaArea-len(meta))/2)
+		out.metaTop = out.progressTop - len(meta) - 1
+		if out.metaTop < artTop {
+			out.metaTop = artTop
+		}
 	} else {
 		top := artTop + maxInt(0, (art.height-len(meta)-transportH)/2)
 		out.metaTop = top
@@ -879,7 +881,6 @@ func (m *Model) coverInfoLines(width int) []string {
 	if artist := strings.TrimSpace(cleanText(m.current.DisplayArtist())); artist != "" {
 		lines = append(lines, accent2Style.Render(truncateText(artist, width)))
 	}
-	lines = append(lines, "")
 	if album := cleanText(m.current.DisplayAlbum()); album != "" {
 		lines = append(lines, dimStyle.Render(truncateText(album, width)))
 	}
