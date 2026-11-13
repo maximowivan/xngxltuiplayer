@@ -591,20 +591,13 @@ func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
 		meta = meta[:keep]
 		total = len(meta) + transportH
 	}
-	if art.height-total >= 4 {
-		transportTop := artTop + art.height - transportH
-		metaAreaH := transportTop - artTop
-		out.metaTop = artTop + maxInt(0, (metaAreaH-len(meta))/2)
-		out.progressTop = transportTop
-		out.controlsTop = out.progressTop + 1
-		out.volumeTop = out.controlsTop + 1
-	} else {
-		top := artTop + maxInt(0, (art.height-total)/2)
-		out.metaTop = top
-		out.progressTop = top + len(meta) + gap
-		out.controlsTop = out.progressTop + 1
-		out.volumeTop = out.controlsTop + 1
-	}
+	// Keep metadata and transport together as one block so there is no large
+	// dead gap between the album line and the sliders.
+	top := artTop + maxInt(0, (art.height-total)/2)
+	out.metaTop = top
+	out.progressTop = top + len(meta) + gap
+	out.controlsTop = out.progressTop + 1
+	out.volumeTop = out.controlsTop + 1
 	out.metaLines = meta
 	return out
 }
