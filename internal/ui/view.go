@@ -873,34 +873,19 @@ func (m *Model) coverInfoLines(width int) []string {
 	}
 	if m.current == nil {
 		return []string{
-			titleStyle.Render(truncateText("Nothing playing", width)),
-			dimStyle.Render(truncateText("Select a track and press enter", width)),
+			centerLine(titleStyle.Render(truncateText("Nothing playing", width)), width),
+			centerLine(dimStyle.Render(truncateText("Select a track and press enter", width)), width),
 		}
 	}
-	lines := make([]string, 0, 7)
+	lines := make([]string, 0, 4)
 	for _, line := range wrapText(cleanText(m.current.DisplayTitle()), width, 2) {
-		lines = append(lines, titleStyle.Render(line))
+		lines = append(lines, centerLine(titleStyle.Render(line), width))
 	}
 	if artist := strings.TrimSpace(cleanText(m.current.DisplayArtist())); artist != "" {
-		lines = append(lines, accent2Style.Render(truncateText(artist, width)))
-	}
-	if album := cleanText(m.current.DisplayAlbum()); album != "" {
-		lines = append(lines, dimStyle.Render(truncateText(album, width)))
-	}
-	details := make([]string, 0, 2)
-	if year := strings.TrimSpace(cleanText(m.current.Year)); year != "" {
-		details = append(details, year)
-	}
-	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(m.current.Path), "."))
-	if ext == "" {
-		ext = "AUDIO"
-	}
-	details = append(details, cleanText(ext))
-	if len(details) > 0 {
-		lines = append(lines, faintStyle.Render(truncateText(strings.Join(details, currentGlyphs.Separator), width)))
+		lines = append(lines, centerLine(dimStyle.Render(truncateText(artist, width)), width))
 	}
 	if m.artLoading {
-		lines = append(lines, dimStyle.Render(truncateText("loading cover"+currentGlyphs.Ellipsis, width)))
+		lines = append(lines, centerLine(dimStyle.Render(truncateText("loading cover"+currentGlyphs.Ellipsis, width)), width))
 	}
 	return lines
 }

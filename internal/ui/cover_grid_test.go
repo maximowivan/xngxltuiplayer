@@ -150,6 +150,35 @@ func TestCoverHeroOwnsTrackInfo(t *testing.T) {
 	}
 }
 
+func TestCoverHeroInfoCentered(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.coverMode = true
+	m.width, m.height = 180, 45
+	layout := m.coverLayout(180, 45)
+	hero := m.coverHeroComposition(layout.cover)
+	lines := m.coverInfoLines(hero.info.width)
+	if len(lines) != 2 {
+		t.Fatalf("hero info lines = %d, want title and artist only", len(lines))
+	}
+	for i, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.TrimSpace(plain) == "" {
+			t.Fatalf("hero info line %d is empty", i)
+		}
+		if lead := len(plain) - len(strings.TrimLeft(plain, " ")); lead == 0 {
+			t.Fatalf("hero info line %d is not centred: %q", i, plain)
+		}
+		if trail := len(plain) - len(strings.TrimRight(plain, " ")); trail == 0 {
+			t.Fatalf("hero info line %d has no trailing padding: %q", i, plain)
+		}
+	}
+	joined := ansi.Strip(strings.Join(lines, "\n"))
+	if strings.Contains(joined, "Neon Skyline") || strings.Contains(joined, "MP3") {
+		t.Fatalf("album/format should not be in the hero block:\n%s", joined)
+	}
+}
+
 // addQueueTracks appends unique tracks to the library and the queue so the
 // UP NEXT panel can be tested with more rows than a single screen.
 func addQueueTracks(m *Model, n int) {

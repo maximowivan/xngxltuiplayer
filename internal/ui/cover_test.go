@@ -19,8 +19,6 @@ func TestCoverModeShowsUpNextPanel(t *testing.T) {
 		"UP NEXT",
 		"Paper Planes",
 		"Slow Motion",
-		"Neon Skyline",
-		"2024",
 		"queue 1/3",
 		"Night Drive",
 		"Aurora",
