@@ -14,14 +14,14 @@ func TestCoverGridLayoutMetrics(t *testing.T) {
 	defer cleanup()
 	layout := m.coverLayout(130, 36)
 	if !layout.grid {
-		t.Fatal("130x36 should use the four-pane grid")
+		t.Fatal("130x36 should use the grid")
 	}
 	if layout.cover.left != 1 || layout.cover.top != 1 {
 		t.Fatalf("cover origin = %d,%d, want 1,1", layout.cover.left, layout.cover.top)
 	}
 	if layout.upNext.left != layout.cover.left+layout.cover.width+1 ||
 		layout.upNext.top != layout.cover.top ||
-		layout.upNext.height != layout.cover.height {
+		layout.upNext.height != 33 {
 		t.Fatalf("up-next pane = %+v, cover = %+v", layout.upNext, layout.cover)
 	}
 	if layout.player.left != layout.cover.left ||
@@ -29,23 +29,25 @@ func TestCoverGridLayoutMetrics(t *testing.T) {
 		layout.player.height != 6 {
 		t.Fatalf("player pane = %+v", layout.player)
 	}
-	if layout.visualizer.left != layout.upNext.left ||
-		layout.visualizer.top != layout.player.top ||
-		layout.visualizer.height != layout.player.height {
-		t.Fatalf("visualizer pane = %+v", layout.visualizer)
-	}
 	if layout.cover.width+1+layout.upNext.width != 128 {
 		t.Fatalf("column widths = %d + 1 + %d, want 128", layout.cover.width, layout.upNext.width)
 	}
 	if layout.upNext.width >= layout.cover.width {
 		t.Fatalf("right column = %d, cover = %d; right should stay narrower", layout.upNext.width, layout.cover.width)
 	}
+	ratio := float64(layout.upNext.width) / float64(layout.cover.width+1+layout.upNext.width)
+	if ratio < 0.30 || ratio > 0.35 {
+		t.Fatalf("right column ratio = %.3f, want 0.30..0.35", ratio)
+	}
 	if layout.cover.height+1+layout.player.height != 33 {
 		t.Fatalf("row heights = %d + 1 + %d, want 33", layout.cover.height, layout.player.height)
 	}
+	if layout.art.width <= 0 || !coverPaneContains(layout.cover, layout.art.left, layout.art.top) {
+		t.Fatalf("art pane = %+v, cover = %+v", layout.art, layout.cover)
+	}
 }
 
-func TestCoverGridShowsFourPanes(t *testing.T) {
+func TestCoverGridShowsThreePanes(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
 	m.coverMode = true
@@ -53,10 +55,10 @@ func TestCoverGridShowsFourPanes(t *testing.T) {
 
 	frame := m.renderCover(130, 36)
 	for _, want := range []string{
-		"COVER",
+		"NOW PLAYING",
+		"SPECTRUM",
 		"UP NEXT",
 		"PLAYER",
-		"VISUALIZER",
 		"Paper Planes",
 		"Slow Motion",
 		"Night Drive",
@@ -67,6 +69,9 @@ func TestCoverGridShowsFourPanes(t *testing.T) {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("cover grid is missing %q:\n%s", want, frame)
 		}
+	}
+	if strings.Contains(frame, "VISUALIZER") {
+		t.Fatalf("visualizer should be inside the now-playing pane:\n%s", frame)
 	}
 	for i, line := range strings.Split(frame, "\n") {
 		if got := ansi.StringWidth(line); got != 130 {
@@ -85,8 +90,10 @@ func TestCoverGridBreakpoints(t *testing.T) {
 		{130, 36, true},
 		{110, 32, true},
 		{96, 28, true},
-		{84, 24, true},
-		{80, 22, true},
+		{88, 24, true},
+		{87, 24, false},
+		{84, 24, false},
+		{80, 22, false},
 		{78, 22, false},
 		{72, 20, false},
 		{60, 24, false},
@@ -102,11 +109,11 @@ func TestCoverGridBreakpoints(t *testing.T) {
 		m.width, m.height = tc.w, tc.h
 		assertFrame(t, m, "cover-grid-breakpoint")
 		frame := m.renderCover(tc.w, tc.h)
-		if tc.grid && !strings.Contains(frame, "VISUALIZER") {
-			t.Fatalf("%dx%d grid is missing VISUALIZER:\n%s", tc.w, tc.h, frame)
+		if tc.grid && (!strings.Contains(frame, "NOW PLAYING") || !strings.Contains(frame, "SPECTRUM")) {
+			t.Fatalf("%dx%d grid is missing the combined now-playing pane:\n%s", tc.w, tc.h, frame)
 		}
-		if !tc.grid && strings.Contains(frame, "VISUALIZER") {
-			t.Fatalf("%dx%d compact layout should not show VISUALIZER:\n%s", tc.w, tc.h, frame)
+		if !tc.grid && strings.Contains(frame, "SPECTRUM") {
+			t.Fatalf("%dx%d compact layout should not show SPECTRUM:\n%s", tc.w, tc.h, frame)
 		}
 	}
 }
@@ -115,7 +122,7 @@ func TestCoverGridResize(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()
 	m.coverMode = true
-	for _, size := range [][2]int{{130, 36}, {110, 32}, {84, 24}, {80, 22}, {78, 22}, {60, 24}, {84, 24}} {
+	for _, size := range [][2]int{{130, 36}, {110, 32}, {96, 28}, {88, 24}, {87, 24}, {84, 24}, {60, 24}, {88, 24}} {
 		m.width, m.height = size[0], size[1]
 		m.resizeInputs()
 		assertFrame(t, m, "cover-grid-resize")
@@ -180,7 +187,7 @@ func TestCoverGridSpectrumBarCount(t *testing.T) {
 	m.coverMode = true
 	m.width, m.height = 130, 36
 	layout := m.coverLayout(130, 36)
-	want := (layout.visualizer.width - 4) / 2
+	want := (layout.cover.width - 4) / 2
 	if want < 4 {
 		want = 4
 	}
@@ -206,7 +213,7 @@ func TestCoverGridHintsAreLastLines(t *testing.T) {
 		t.Fatalf("lines = %d, want 30", len(lines))
 	}
 	for i := 28; i < len(lines); i++ {
-		if strings.Contains(lines[i], "PLAYER") || strings.Contains(lines[i], "VISUALIZER") {
+		if strings.Contains(lines[i], "PLAYER") || strings.Contains(lines[i], "UP NEXT") {
 			t.Fatalf("stale pane title after hints on line %d:\n%s", i, strings.Join(lines, "\n"))
 		}
 	}

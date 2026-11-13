@@ -787,7 +787,7 @@ func TestCoverModeTogglesFromArtClick(t *testing.T) {
 	if !m.coverMode {
 		t.Fatal("clicking the artwork should open cover mode")
 	}
-	cover := m.coverLayout(m.width, m.height).cover
+	cover := m.coverLayout(m.width, m.height).art
 	m.Update(tea.MouseMsg{
 		X:      cover.left + cover.width/2,
 		Y:      cover.top + cover.height/2,

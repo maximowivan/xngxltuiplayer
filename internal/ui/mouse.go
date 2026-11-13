@@ -259,7 +259,12 @@ func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	w, h := m.dims()
 	layout := m.coverLayout(w, h)
 	if layout.grid {
-		if coverPaneContains(layout.cover, msg.X, msg.Y) {
+		if layout.art.width > 0 {
+			if coverPaneContains(layout.art, msg.X, msg.Y) {
+				m.coverMode = false
+				return m, nil
+			}
+		} else if coverPaneContains(layout.cover, msg.X, msg.Y) {
 			m.coverMode = false
 			return m, nil
 		}

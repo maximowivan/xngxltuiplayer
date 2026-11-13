@@ -570,7 +570,7 @@ func (m *Model) spectrumBarCount() int {
 		if !layout.grid {
 			return 0
 		}
-		bars := maxInt(1, layout.visualizer.width-4) / 2
+		bars := maxInt(1, layout.cover.width-4) / 2
 		if bars < 4 {
 			bars = 4
 		}

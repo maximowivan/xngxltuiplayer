@@ -406,19 +406,20 @@ type coverPane struct {
 }
 
 type coverLayoutSpec struct {
-	grid       bool
-	cover      coverPane
-	upNext     coverPane
-	player     coverPane
-	visualizer coverPane
+	grid   bool
+	cover  coverPane
+	art    coverPane
+	upNext coverPane
+	player coverPane
 }
 
-// coverLayout computes the four-panel cover screen. It only enables the grid
-// when every pane has enough room; otherwise the caller falls back to the
-// compact cover + player view.
+// coverLayout computes the cover screen: a wide left column with a combined
+// cover + spectrum pane above the player, and a narrower full-height UP NEXT
+// column on the right. It falls back to the compact layout when the panes
+// would be too small.
 func (m *Model) coverLayout(w, h int) coverLayoutSpec {
 	var out coverLayoutSpec
-	if w < 80 || h < 22 {
+	if w < 88 || h < 23 {
 		return out
 	}
 	const (
@@ -429,34 +430,13 @@ func (m *Model) coverLayout(w, h int) coverLayoutSpec {
 	gridW := w - margin*2
 	gridH := h - 3
 	topH := gridH - gap - bottomH
-	if topH < 11 {
+	if topH < 13 {
 		return out
 	}
 
-	leftW := gridW * 54 / 100
-	if maxLeft := topH*2 + 12; leftW > maxLeft {
-		leftW = maxLeft
-	}
-	if leftW < 40 {
-		leftW = 40
-	}
-	rightW := gridW - gap - leftW
-	if rightW < 32 {
-		return out
-	}
-	// On very wide windows the right column would otherwise grow past the
-	// cover column. Keep it a touch narrower and center the grid.
-	if rightW > leftW {
-		rightW = maxInt(32, leftW-2)
-		gridW = leftW + gap + rightW
-	}
-
-	// The art is two terminal cells wide per cell of height. If it would
-	// occupy less than half of the cover pane, the grid would look empty;
-	// fall back to the compact layout instead.
-	innerW := leftW - 4
-	artH := minInt(topH-2, innerW/2)
-	if artH < 4 || artH*4 < innerW {
+	rightW := maxInt(30, gridW*34/100)
+	leftW := gridW - gap - rightW
+	if leftW < 48 || rightW < 30 {
 		return out
 	}
 
@@ -464,10 +444,36 @@ func (m *Model) coverLayout(w, h int) coverLayoutSpec {
 	x := (w - gridW) / 2
 	y := 1
 	out.cover = coverPane{left: x, top: y, width: leftW, height: topH}
-	out.upNext = coverPane{left: x + leftW + gap, top: y, width: rightW, height: topH}
+	out.upNext = coverPane{left: x + leftW + gap, top: y, width: rightW, height: gridH}
 	out.player = coverPane{left: x, top: y + topH + gap, width: leftW, height: bottomH}
-	out.visualizer = coverPane{left: x + leftW + gap, top: y + topH + gap, width: rightW, height: bottomH}
+	out.art, _ = coverArtPaneFor(out.cover)
 	return out
+}
+
+// coverArtPaneFor returns the centered art rectangle inside the combined
+// cover + spectrum pane, plus the number of rows reserved for the spectrum.
+func coverArtPaneFor(pane coverPane) (coverPane, int) {
+	innerW := pane.width - 4
+	innerH := pane.height - 2
+	if innerW < 1 || innerH < 1 {
+		return coverPane{}, 0
+	}
+	spectrumRows := minInt(7, maxInt(4, innerH/4))
+	if spectrumRows >= innerH {
+		spectrumRows = maxInt(1, innerH-1)
+	}
+	artAreaH := innerH - spectrumRows
+	artH := minInt(artAreaH, innerW/2)
+	if artH < 4 {
+		return coverPane{}, spectrumRows
+	}
+	artW := artH * 2
+	return coverPane{
+		left:   pane.left + 2 + (innerW-artW)/2,
+		top:    pane.top + 1 + (artAreaH-artH)/2,
+		width:  artW,
+		height: artH,
+	}, spectrumRows
 }
 
 func coverPaneContains(p coverPane, x, y int) bool {
@@ -591,38 +597,36 @@ func (m *Model) renderCoverCompact(w, h int) string {
 }
 
 func (m *Model) renderCoverGrid(w, h int, layout coverLayoutSpec) string {
-	cover := strings.Split(m.renderCoverArtPane(layout.cover), "\n")
+	cover := strings.Split(m.renderCoverNowPlayingPane(layout.cover), "\n")
 	upNext := strings.Split(m.renderCoverUpNextPane(layout.upNext), "\n")
 	player := strings.Split(m.renderCoverPlayerCard(layout.player.width), "\n")
-	visualizer := strings.Split(m.renderCoverVisualizerPane(layout.visualizer), "\n")
 	blank := strings.Repeat(" ", w)
 
-	body := make([]string, 0, h-3)
-	gap := layout.upNext.left - (layout.cover.left + layout.cover.width)
-	for i := 0; i < layout.cover.height; i++ {
-		leftLine, rightLine := "", ""
-		if i < len(cover) {
-			leftLine = cover[i]
-		}
-		if i < len(upNext) {
-			rightLine = upNext[i]
-		}
-		body = append(body, fitLine(
-			strings.Repeat(" ", layout.cover.left)+leftLine+
-				strings.Repeat(" ", maxInt(0, gap))+rightLine, w))
+	left := make([]string, 0, layout.upNext.height)
+	left = append(left, cover...)
+	left = append(left, strings.Repeat(" ", layout.cover.width))
+	left = append(left, player...)
+	leftBlank := strings.Repeat(" ", layout.cover.width)
+	rightBlank := strings.Repeat(" ", layout.upNext.width)
+	for len(left) < layout.upNext.height {
+		left = append(left, leftBlank)
 	}
-	body = append(body, blank)
-	for i := 0; i < layout.player.height; i++ {
-		leftLine, rightLine := "", ""
-		if i < len(player) {
-			leftLine = player[i]
-		}
-		if i < len(visualizer) {
-			rightLine = visualizer[i]
-		}
+	if len(left) > layout.upNext.height {
+		left = left[:layout.upNext.height]
+	}
+	for len(upNext) < layout.upNext.height {
+		upNext = append(upNext, rightBlank)
+	}
+	if len(upNext) > layout.upNext.height {
+		upNext = upNext[:layout.upNext.height]
+	}
+
+	body := make([]string, 0, layout.upNext.height)
+	gap := layout.upNext.left - (layout.cover.left + layout.cover.width)
+	for i := 0; i < layout.upNext.height; i++ {
 		body = append(body, fitLine(
-			strings.Repeat(" ", layout.player.left)+leftLine+
-				strings.Repeat(" ", maxInt(0, gap))+rightLine, w))
+			strings.Repeat(" ", layout.cover.left)+left[i]+
+				strings.Repeat(" ", maxInt(0, gap))+upNext[i], w))
 	}
 
 	lines := []string{m.renderHeader(w)}
@@ -641,45 +645,59 @@ func (m *Model) renderCoverGrid(w, h int, layout coverLayoutSpec) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) renderCoverArtPane(pane coverPane) string {
+func (m *Model) renderCoverNowPlayingPane(pane coverPane) string {
 	innerW := pane.width - 4
 	innerH := pane.height - 2
 	if innerW < 1 || innerH < 1 {
-		return renderBox("Cover", nil, pane.width, pane.height, colFaint, colAccent)
+		return renderBox("Now playing", nil, pane.width, pane.height, colFaint, colAccent)
 	}
+	art, spectrumRows := coverArtPaneFor(pane)
+	artAreaH := innerH - spectrumRows
 	lines := make([]string, 0, innerH)
-	if m.current == nil {
-		lines = append(lines, centerLine(dimStyle.Render("Nothing playing"), innerW))
-	} else {
-		artH := minInt(innerH, innerW/2)
-		artW := artH * 2
-		if artH < 4 {
-			lines = append(lines, centerLine(dimStyle.Render("No cover"), innerW))
-		} else {
-			img := m.artImage
-			if img == nil {
-				img = placeholderImage(artW, artH*2)
-			}
-			art := renderArt(img, artW, artH)
-			for i := 0; i < (innerH-artH)/2; i++ {
-				lines = append(lines, "")
-			}
-			for _, artLine := range art {
-				lines = append(lines, centerLine(artLine, innerW))
-			}
+
+	if art.height > 0 {
+		topPad := maxInt(0, art.top-(pane.top+1))
+		for i := 0; i < topPad; i++ {
+			lines = append(lines, "")
 		}
+		img := m.artImage
+		if img == nil {
+			img = placeholderImage(art.width, art.height*2)
+		}
+		for _, artLine := range renderArt(img, art.width, art.height) {
+			lines = append(lines, centerLine(artLine, innerW))
+		}
+	} else {
+		message := "No cover"
+		if m.current == nil {
+			message = "Nothing playing"
+		}
+		for i := 0; i < artAreaH/2; i++ {
+			lines = append(lines, "")
+		}
+		lines = append(lines, centerLine(dimStyle.Render(message), innerW))
 	}
+	for len(lines) < artAreaH {
+		lines = append(lines, "")
+	}
+	if len(lines) > artAreaH {
+		lines = lines[:artAreaH]
+	}
+
+	lines = append(lines, fitLine(sectionStyle.Render("SPECTRUM")+dimStyle.Render("  live FFT"), innerW))
+	bars := renderSpectrum(m.spectrum, innerW, maxInt(0, spectrumRows-1))
+	lines = append(lines, bars...)
 	for len(lines) < innerH {
 		lines = append(lines, "")
 	}
 	if len(lines) > innerH {
 		lines = lines[:innerH]
 	}
-	return renderBox("Cover", lines, pane.width, pane.height, colFaint, colAccent)
+	return renderBox("Now playing", lines, pane.width, pane.height, colFaint, colAccent)
 }
 
 func (m *Model) coverUpNextLimit(pane coverPane) int {
-	return minInt(10, maxInt(0, pane.height-3))
+	return minInt(14, maxInt(0, pane.height-3))
 }
 
 func (m *Model) renderCoverUpNextPane(pane coverPane) string {
@@ -758,22 +776,6 @@ func (m *Model) coverUpNextTrackAt(pane coverPane, x, y int) (model.Track, bool)
 		return model.Track{}, false
 	}
 	return tracks[index], true
-}
-
-func (m *Model) renderCoverVisualizerPane(pane coverPane) string {
-	innerW := pane.width - 4
-	innerH := pane.height - 2
-	if innerW < 1 || innerH < 1 {
-		return renderBox("Visualizer", nil, pane.width, pane.height, colFaint, colAccent2)
-	}
-	lines := renderSpectrum(m.spectrum, innerW, innerH)
-	for len(lines) < innerH {
-		lines = append(lines, "")
-	}
-	if len(lines) > innerH {
-		lines = lines[:innerH]
-	}
-	return renderBox("Visualizer", lines, pane.width, pane.height, colFaint, colAccent2)
 }
 
 func (m *Model) coverCardGeometry(w, h int) (left, top, width, height int) {
