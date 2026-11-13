@@ -71,9 +71,17 @@ func TestCoverGridLayoutMetrics(t *testing.T) {
 	}
 	blockH := hero.volumeTop - hero.metaTop + 1
 	artTop := hero.art.top - (layout.cover.top + 1)
-	if want := artTop + (hero.art.height-blockH)/2; hero.metaTop != want {
-		t.Fatalf("hero block top = %d, want centred %d (art height %d, block %d)",
-			hero.metaTop, want, hero.art.height, blockH)
+	titleLines := m.coverTitleLines(hero.info.width)
+	want := artTop + hero.art.height/2 - titleLines/2
+	if bottom := want + blockH - 1; bottom > artTop+hero.art.height-1 {
+		want -= bottom - (artTop + hero.art.height - 1)
+	}
+	if want < artTop {
+		want = artTop
+	}
+	if hero.metaTop != want {
+		t.Fatalf("hero block top = %d, want %d (title %d lines, art height %d, block %d)",
+			hero.metaTop, want, titleLines, hero.art.height, blockH)
 	}
 	if hero.volumeTop >= layout.cover.height-2 {
 		t.Fatalf("volume row = %d escapes the panel inner height %d", hero.volumeTop, layout.cover.height-2)

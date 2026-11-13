@@ -551,9 +551,10 @@ func coverPaneContains(p coverPane, x, y int) bool {
 }
 
 // coverHeroComposition positions the track metadata and the transport inside
-// the info column next to the cover. The whole block is centred vertically
-// against the artwork; shorter panes drop the spacer and then trim metadata
-// lines. All row offsets are relative to the panel's inner area.
+// the info column next to the cover. The track title is centred vertically
+// against the artwork and the rest of the block flows below it; if there is
+// not enough room the block shifts up and metadata lines are trimmed. All row
+// offsets are relative to the panel's inner area.
 type coverHeroComposition struct {
 	art          coverPane
 	info         coverPane
@@ -586,13 +587,36 @@ func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
 		meta = meta[:keep]
 	}
 	total := len(meta) + gap + transportH
-	top := artTop + maxInt(0, (art.height-total)/2)
-	out.metaTop = top
-	out.progressTop = top + len(meta) + gap
+	// Anchor the track title to the vertical centre of the cover; the rest of
+	// the block flows downward from it. If the block would overflow, shift it
+	// up just enough to keep the transport visible.
+	titleLines := m.coverTitleLines(info.width)
+	titleTop := artTop + art.height/2 - titleLines/2
+	if bottom := titleTop + total - 1; bottom > artTop+art.height-1 {
+		titleTop -= bottom - (artTop + art.height - 1)
+	}
+	if titleTop < artTop {
+		titleTop = artTop
+	}
+	out.metaTop = titleTop
+	out.progressTop = titleTop + len(meta) + gap
 	out.controlsTop = out.progressTop + 1
 	out.volumeTop = out.controlsTop + 2
 	out.metaLines = meta
 	return out
+}
+
+// coverTitleLines returns how many rows the wrapped track title occupies, so
+// the title block can be centred against the cover.
+func (m *Model) coverTitleLines(width int) int {
+	if m.current == nil {
+		return 1
+	}
+	lines := len(wrapText(cleanText(m.current.DisplayTitle()), width, 2))
+	if lines == 0 {
+		return 1
+	}
+	return lines
 }
 
 // coverArtSize returns the inner art dimensions and first art row for the
