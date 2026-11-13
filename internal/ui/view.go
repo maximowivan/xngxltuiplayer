@@ -496,17 +496,16 @@ func coverHeroPanes(pane coverPane) (art, info coverPane, spectrumRows int) {
 	if innerW < 1 || innerH < 1 {
 		return coverPane{}, coverPane{}, 0
 	}
-	// Give tall windows a taller spectrum (8-10 rows) without letting it eat
-	// the cover on short ones. Tall panes also reserve one blank row between
-	// the artwork and the SPECTRUM label.
-	spectrumRows = minInt(10, maxInt(6, innerH/4+2))
-	if innerH >= 16 && spectrumRows < 10 {
-		spectrumRows++
+	// Split the panel between the hero block and the spectrum. The hero grows
+	// with the window but stops at 24 rows so the cover never dwarfs the text
+	// block; the rest goes to the spectrum.
+	heroRows := minInt(24, maxInt(12, innerH*65/100))
+	spectrumRows = innerH - heroRows
+	if spectrumRows < 6 {
+		spectrumRows = 6
+		heroRows = innerH - spectrumRows
 	}
-	if spectrumRows > innerH-5 {
-		spectrumRows = maxInt(2, innerH-5)
-	}
-	artAreaH := innerH - spectrumRows
+	artAreaH := heroRows
 	if artAreaH < 4 {
 		return coverPane{}, coverPane{}, spectrumRows
 	}
@@ -890,11 +889,49 @@ func (m *Model) coverInfoLines(width int) []string {
 		ext = "AUDIO"
 	}
 	details = append(details, cleanText(ext))
-	lines = append(lines, faintStyle.Render(truncateText(strings.Join(details, currentGlyphs.Separator), width)))
+	if len(details) > 0 {
+		lines = append(lines, faintStyle.Render(truncateText(strings.Join(details, currentGlyphs.Separator), width)))
+	}
+	if tech := m.coverTechText(); tech != "" {
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render(truncateText(tech, width)))
+	}
+	if added := m.coverAddedText(); added != "" {
+		lines = append(lines, faintStyle.Render(truncateText(added, width)))
+	}
 	if m.artLoading {
 		lines = append(lines, dimStyle.Render(truncateText("loading cover"+currentGlyphs.Ellipsis, width)))
 	}
 	return lines
+}
+
+// coverTechText summarises the current file: duration, size and an approximate
+// bitrate. The estimate includes tags and artwork, so it is prefixed with "~".
+func (m *Model) coverTechText() string {
+	if m.current == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if m.current.Duration > 0 {
+		parts = append(parts, model.FormatDuration(m.current.Duration))
+	}
+	if m.current.Size > 0 {
+		parts = append(parts, humanSize(m.current.Size))
+		if m.current.Duration > 0 {
+			kbps := int(float64(m.current.Size)*8/m.current.Duration.Seconds()/1000 + 0.5)
+			if kbps > 0 {
+				parts = append(parts, fmt.Sprintf("~%d kbps", kbps))
+			}
+		}
+	}
+	return strings.Join(parts, currentGlyphs.Separator)
+}
+
+func (m *Model) coverAddedText() string {
+	if m.current == nil || m.current.Added.IsZero() {
+		return ""
+	}
+	return "Added " + m.current.Added.Format("2006-01-02")
 }
 
 func (m *Model) coverUpNextLimit(pane coverPane) int {
