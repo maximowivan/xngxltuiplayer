@@ -258,12 +258,14 @@ func (m *Model) clickNowPlaying(innerX, innerY, width, contentH int) {
 func (m *Model) handleCoverClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	w, h := m.dims()
 	artW, artH, artTop := m.coverArtSize(w, h)
-	pad := maxInt(0, (w-artW)/2)
-	if msg.Y >= artTop && msg.Y < artTop+artH {
-		if msg.X >= pad && msg.X < pad+artW {
+	if artW > 0 && artH > 0 {
+		frameW := artW + 2
+		left := maxInt(0, (w-frameW)/2)
+		top := artTop - 1
+		if msg.Y >= top && msg.Y < top+artH+2 && msg.X >= left && msg.X < left+frameW {
 			m.coverMode = false
+			return m, nil
 		}
-		return m, nil
 	}
 	// The compact player is bottom-aligned: title, progress, hints, toast.
 	if msg.Y == h-3 {
