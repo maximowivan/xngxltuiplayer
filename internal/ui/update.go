@@ -414,6 +414,9 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if key == "f4" || key == "ctrl+p" {
+			return m, m.openDownloadPlaylistPicker(modalAddLink)
+		}
 		if len(m.linkResults) > 0 {
 			switch key {
 			case "up":
@@ -549,12 +552,47 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modalPreview:
+		if key == "f4" || key == "ctrl+p" {
+			return m, m.openDownloadPlaylistPicker(modalPreview)
+		}
 		switch key {
 		case "esc", "q":
 			m.closeModal()
 			return m, nil
 		case "enter":
 			return m, m.confirmPreview()
+		}
+		return m, nil
+
+	case modalDownloadPlaylists:
+		items := m.playlists.List()
+		switch key {
+		case "esc", "q":
+			return m, m.closeDownloadPlaylistPicker(false)
+		case "enter":
+			return m, m.closeDownloadPlaylistPicker(true)
+		case "f4", "ctrl+p":
+			return m, m.closeDownloadPlaylistPicker(true)
+		case "up", "k":
+			if m.modalCursor > 0 {
+				m.modalCursor--
+			}
+		case "down", "j":
+			if m.modalCursor < len(items)-1 {
+				m.modalCursor++
+			}
+		case "pgup":
+			m.modalCursor = maxInt(0, m.modalCursor-6)
+		case "pgdown":
+			m.modalCursor = minInt(maxInt(0, len(items)-1), m.modalCursor+6)
+		case "home":
+			m.modalCursor = 0
+		case "end":
+			m.modalCursor = maxInt(0, len(items)-1)
+		case " ":
+			m.toggleDownloadPlaylist()
+		case "c":
+			m.clearDownloadPlaylists()
 		}
 		return m, nil
 
@@ -718,6 +756,9 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modalDownloads:
+		if key == "f4" || key == "ctrl+p" {
+			return m, m.openDownloadPlaylistPicker(modalDownloads)
+		}
 		switch key {
 		case "esc", "d", "q":
 			m.closeModal()
@@ -775,13 +816,14 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "C":
+			cmds := m.processDownloadJobs(m.mgr.Jobs())
 			if n := m.mgr.ClearFinished(); n > 0 {
 				m.setToast("Cleared finished downloads", toastInfo, 2*time.Second)
 				m.refreshJobs()
 			} else {
 				m.setToast("No finished downloads to clear", toastInfo, 2*time.Second)
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		case "a":
 			return m, m.openAddLink()
 		}

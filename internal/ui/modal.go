@@ -42,6 +42,8 @@ func (m *Model) renderModal(w, contentH int) string {
 		return m.renderHelpModal(w, contentH)
 	case modalDownloads:
 		return m.renderDownloadsModal(w, contentH)
+	case modalDownloadPlaylists:
+		return m.renderDownloadPlaylistModal(w, contentH)
 	case modalImportM3U, modalExportM3U:
 		return m.renderM3UModal(w, contentH)
 	case modalEditTags:
@@ -64,6 +66,83 @@ func modalHeight(contentH, desired int) int {
 	return minInt(maxInt(8, desired), maxInt(8, contentH-2))
 }
 
+func (m *Model) renderSaveToLine(width int) string {
+	label := dimStyle.Render("Save to: ")
+	value := faintStyle.Render("none")
+	if len(m.downloadPlaylists) > 0 {
+		value = accent2Style.Render(m.destinationLabel(m.downloadPlaylists, maxInt(8, width-28)))
+	}
+	if width < 42 {
+		return fitLine(label+value, width)
+	}
+	hint := faintStyle.Render("F4 / Ctrl+P")
+	return fitLine(padBetween(label+value, hint, width), width)
+}
+
+func (m *Model) renderDownloadPlaylistModal(w, contentH int) string {
+	width := minInt(64, maxInt(44, w-8))
+	innerW := width - 4
+	items := m.playlists.List()
+	height := modalHeight(contentH, 10+minInt(len(items), 8))
+	innerH := height - 2
+
+	if m.modalCursor < 0 {
+		m.modalCursor = 0
+	}
+	if m.modalCursor >= len(items) {
+		m.modalCursor = maxInt(0, len(items)-1)
+	}
+
+	header := sectionStyle.Render("Choose playlists for new downloads.")
+	if selected := len(m.downloadPlaylists); selected > 0 {
+		header = padBetween(header, faintStyle.Render(fmt.Sprintf("%d selected", selected)), innerW)
+	}
+	lines := []string{header, ""}
+
+	visible := maxInt(1, innerH-6)
+	if len(items) == 0 {
+		lines = append(lines, dimStyle.Render("No playlists yet."))
+		lines = append(lines, faintStyle.Render("Press P in the library to create one."))
+	} else {
+		start := 0
+		if m.modalCursor >= visible {
+			start = m.modalCursor - visible + 1
+		}
+		if start+visible > len(items) {
+			start = maxInt(0, len(items)-visible)
+		}
+		end := minInt(len(items), start+visible)
+		for i := start; i < end; i++ {
+			item := items[i]
+			check := "[ ] "
+			selected := m.downloadPlaylistSelected(item.Name)
+			if selected {
+				check = "[x] "
+			}
+			left := check + cleanText(item.Name)
+			right := fmt.Sprintf("%d", len(item.Tracks))
+			row := padBetween(left, right, innerW)
+			switch {
+			case i == m.modalCursor:
+				lines = append(lines, selectedStyle.Render(row))
+			case selected:
+				lines = append(lines, accent2Style.Render(row))
+			default:
+				lines = append(lines, textStyle.Render(row))
+			}
+		}
+	}
+
+	for len(lines) < innerH-2 {
+		lines = append(lines, "")
+	}
+	lines = append(lines,
+		dimStyle.Render("space toggle"+currentGlyphs.Separator+"c clear"),
+		dimStyle.Render("enter save"+currentGlyphs.Separator+"esc cancel"),
+	)
+	return renderBox("Save to", lines, width, height, colAccent, colAccent)
+}
+
 func (m *Model) renderAddLinkModal(w, contentH int) string {
 	width := modalWidth(w)
 	innerW := width - 4
@@ -72,7 +151,7 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 	if m.auditionStatus() != "" && len(m.linkResults) > 0 {
 		extra = 1
 	}
-	height := modalHeight(contentH, 10+visible+extra)
+	height := modalHeight(contentH, 11+visible+extra)
 
 	source := m.linkSource.String()
 	header := accent2Style.Render(source) + faintStyle.Render("   Tab to switch source")
@@ -89,6 +168,7 @@ func (m *Model) renderAddLinkModal(w, contentH int) string {
 		header,
 		"",
 		fitLine(m.linkInput.View(), innerW),
+		m.renderSaveToLine(innerW),
 		"",
 	}
 	switch {
@@ -182,6 +262,7 @@ func (m *Model) renderPreviewModal(w, contentH int) string {
 			dimStyle.Render(truncateText(subtitle, innerW)),
 			"",
 			textStyle.Render(summary),
+			m.renderSaveToLine(innerW),
 			"",
 		}
 		if preview.Truncated {
@@ -209,7 +290,7 @@ func (m *Model) renderPreviewModal(w, contentH int) string {
 
 	height := modalHeight(contentH, len(build(maxRows))+2)
 	innerH := height - 2
-	rows := maxInt(1, innerH-7)
+	rows := maxInt(1, innerH-8)
 	if rows > maxRows {
 		rows = maxRows
 	}
@@ -649,6 +730,7 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"X", "cancel all active"},
 		{"r / R", "retry selected / failed"},
 		{"C", "clear finished"},
+		{"F4 / ^P", "choose save playlists"},
 		{"a", "add link or playlist"},
 		{"?", "this help"},
 		{"ctrl+c", "quit (saves session)"},
@@ -749,10 +831,7 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 		if job.TrackTotal > 0 {
 			title = fmt.Sprintf("%d/%d %s", job.TrackNumber, job.TrackTotal, title)
 		}
-		status := job.Status.String()
-		if !job.Status.Terminal() && job.Progress >= 0 {
-			status = fmt.Sprintf("%s %d%%", status, int(job.Progress*100))
-		}
+		status := m.downloadStatusText(job)
 		left := icon + " " + title
 		row := padBetween(left, status, innerW)
 		if item.jobIndex == m.downloadsCur {
@@ -796,6 +875,9 @@ func (m *Model) renderDownloadsModal(w, contentH int) string {
 		lines = append(lines, dimStyle.Render("saved to "+truncateText(cleanText(job.Path), maxInt(8, innerW-9))))
 	default:
 		lines = append(lines, faintStyle.Render(currentGlyphs.Dash))
+	}
+	if dest := m.shortDestinationLabel(m.jobDestinationNames(job), 24); dest != "" {
+		lines = append(lines, dimStyle.Render("save   "+currentGlyphs.Right+" ")+accent2Style.Render(dest))
 	}
 	return renderBox("Downloads", lines, width, height, colAccent, colAccent)
 }

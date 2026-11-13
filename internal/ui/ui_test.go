@@ -145,6 +145,7 @@ func TestViewFrames(t *testing.T) {
 		modalConfirmDeletePlaylist,
 		modalHelp,
 		modalDownloads,
+		modalDownloadPlaylists,
 		modalEditTags, modalDuplicates, modalThemes, modalUpdate,
 	} {
 		m.modal = modal

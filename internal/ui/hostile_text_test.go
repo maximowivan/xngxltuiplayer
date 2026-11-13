@@ -26,6 +26,7 @@ func TestHostileTextDoesNotBreakLayout(t *testing.T) {
 		modalNone, modalAddLink, modalPreview, modalEQ, modalNewPlaylist, modalRenamePlaylist, modalAddToPlaylist,
 		modalConfirmRemoveFromPlaylist, modalConfirmDeleteTrack,
 		modalConfirmDeletePlaylist, modalHelp, modalDownloads,
+		modalDownloadPlaylists,
 		modalImportM3U, modalExportM3U, modalEditTags, modalDuplicates, modalThemes, modalUpdate,
 	}
 	defer func() {

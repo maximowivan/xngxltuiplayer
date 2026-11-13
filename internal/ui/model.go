@@ -68,6 +68,7 @@ const (
 	modalConfirmDeletePlaylist
 	modalHelp
 	modalDownloads
+	modalDownloadPlaylists
 	modalImportM3U
 	modalExportM3U
 	modalEditTags
@@ -122,6 +123,12 @@ type artLoadedMsg struct {
 	path string
 	img  image.Image
 	err  error
+}
+
+type savedTrack struct {
+	jobID       int
+	path        string
+	trackNumber int
 }
 
 // Model is the Bubble Tea application state.
@@ -273,7 +280,15 @@ type Model struct {
 	preview        *download.Preview
 	previewSeq     int
 	previewLoading bool
-	groupNotified  map[int]bool
+	groupFlushed   map[int]bool
+
+	downloadPlaylists []string
+	playlistReturn    modalKind
+	playlistBackup    []string
+	jobPlaylists      map[int][]string
+	groupPlaylists    map[int][]string
+	groupDone         map[int][]savedTrack
+	jobAdded          map[int]bool
 
 	toast      string
 	toastKind  toastKind
@@ -315,29 +330,33 @@ func New(cfg config.Config, lib *library.Library, playlists *playlist.Store,
 	eq := audio.EQFromSlice(initial.EQ, initial.EQPreamp)
 
 	m := &Model{
-		cfg:           cfg,
-		lib:           lib,
-		playlists:     playlists,
-		stats:         statsStore,
-		engine:        engine,
-		mgr:           mgr,
-		initial:       initial,
-		width:         110,
-		height:        32,
-		loading:       true,
-		view:          view,
-		focus:         focusTracks,
-		volume:        volume,
-		repeat:        repeat,
-		shuffle:       initial.Shuffle,
-		sortMode:      sortMode,
-		speed:         speed,
-		eq:            eq,
-		theme:         applyTheme(initial.Theme),
-		jobSeen:       make(map[int]download.Status),
-		groupNotified: make(map[int]bool),
-		linkSelected:  make(map[string]bool),
-		lastSave:      time.Now(),
+		cfg:            cfg,
+		lib:            lib,
+		playlists:      playlists,
+		stats:          statsStore,
+		engine:         engine,
+		mgr:            mgr,
+		initial:        initial,
+		width:          110,
+		height:         32,
+		loading:        true,
+		view:           view,
+		focus:          focusTracks,
+		volume:         volume,
+		repeat:         repeat,
+		shuffle:        initial.Shuffle,
+		sortMode:       sortMode,
+		speed:          speed,
+		eq:             eq,
+		theme:          applyTheme(initial.Theme),
+		jobSeen:        make(map[int]download.Status),
+		groupFlushed:   make(map[int]bool),
+		linkSelected:   make(map[string]bool),
+		jobPlaylists:   make(map[int][]string),
+		groupPlaylists: make(map[int][]string),
+		groupDone:      make(map[int][]savedTrack),
+		jobAdded:       make(map[int]bool),
+		lastSave:       time.Now(),
 	}
 	m.startupNote = startupHint
 	if m.startupNote != "" {
@@ -1872,6 +1891,7 @@ func (m *Model) deletePlaylistNow() tea.Cmd {
 		if m.view == name {
 			m.view = "all"
 		}
+		m.dropDownloadDestination(name)
 		m.syncSidebarCursor()
 		m.rebuildVisible("")
 		m.setToast("Playlist \""+name+"\" deleted", toastSuccess, 3*time.Second)
@@ -1907,9 +1927,13 @@ func (m *Model) downloadListItems() []downloadListItem {
 			if title == "" {
 				title = job.GroupKind.String()
 			}
+			title = fmt.Sprintf("%s  %d tracks", title, counts[job.GroupID])
+			if dest := m.destinationLabel(m.groupPlaylists[job.GroupID], 28); dest != "" {
+				title += " " + currentGlyphs.Right + " " + dest
+			}
 			items = append(items, downloadListItem{
 				header: true,
-				title:  fmt.Sprintf("%s  %d tracks", title, counts[job.GroupID]),
+				title:  title,
 			})
 			lastGroup = job.GroupID
 		}
@@ -1939,6 +1963,8 @@ func (m *Model) refreshJobs() {
 	if m.downloadsCur < 0 {
 		m.downloadsCur = 0
 	}
+	m.ensureDownloadMaps()
+	m.pruneDownloadState()
 }
 
 func (m *Model) selectedJob() (download.Job, bool) {
@@ -2151,6 +2177,210 @@ func (m *Model) openDownloads() {
 	m.downloadsOff = 0
 }
 
+func (m *Model) ensureDownloadMaps() {
+	if m.jobPlaylists == nil {
+		m.jobPlaylists = make(map[int][]string)
+	}
+	if m.groupPlaylists == nil {
+		m.groupPlaylists = make(map[int][]string)
+	}
+	if m.groupDone == nil {
+		m.groupDone = make(map[int][]savedTrack)
+	}
+	if m.jobAdded == nil {
+		m.jobAdded = make(map[int]bool)
+	}
+}
+
+func (m *Model) downloadPlaylistsCopy() []string {
+	if len(m.downloadPlaylists) == 0 {
+		return nil
+	}
+	return append([]string(nil), m.downloadPlaylists...)
+}
+
+func (m *Model) downloadPlaylistSelected(name string) bool {
+	for _, selected := range m.downloadPlaylists {
+		if strings.EqualFold(selected, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) openDownloadPlaylistPicker(returnTo modalKind) tea.Cmd {
+	m.ensureDownloadMaps()
+	m.stopAudition()
+	m.playlistReturn = returnTo
+	m.playlistBackup = m.downloadPlaylistsCopy()
+	m.modal = modalDownloadPlaylists
+	m.modalErr = ""
+	m.modalCursor = 0
+	items := m.playlists.List()
+	for i, item := range items {
+		if m.downloadPlaylistSelected(item.Name) {
+			m.modalCursor = i
+			break
+		}
+	}
+	return nil
+}
+
+func (m *Model) closeDownloadPlaylistPicker(apply bool) tea.Cmd {
+	if !apply {
+		m.downloadPlaylists = append([]string(nil), m.playlistBackup...)
+	}
+	returnTo := m.playlistReturn
+	m.playlistReturn = modalNone
+	m.playlistBackup = nil
+	if returnTo == modalNone {
+		m.modal = modalNone
+		return nil
+	}
+	m.modal = returnTo
+	if returnTo == modalAddLink {
+		return m.linkInput.Focus()
+	}
+	if returnTo == modalDownloads {
+		m.refreshJobs()
+	}
+	return nil
+}
+
+func (m *Model) toggleDownloadPlaylist() {
+	items := m.playlists.List()
+	if m.modalCursor < 0 || m.modalCursor >= len(items) {
+		return
+	}
+	name := items[m.modalCursor].Name
+	for i, selected := range m.downloadPlaylists {
+		if strings.EqualFold(selected, name) {
+			m.downloadPlaylists = append(m.downloadPlaylists[:i], m.downloadPlaylists[i+1:]...)
+			return
+		}
+	}
+	m.downloadPlaylists = append(m.downloadPlaylists, name)
+}
+
+func (m *Model) clearDownloadPlaylists() {
+	m.downloadPlaylists = nil
+}
+
+func (m *Model) assignJobDestination(jobID int, names []string) {
+	if jobID <= 0 || len(names) == 0 {
+		return
+	}
+	m.ensureDownloadMaps()
+	m.jobPlaylists[jobID] = append([]string(nil), names...)
+}
+
+func (m *Model) assignGroupDestination(groupID int, names []string) {
+	if groupID <= 0 || len(names) == 0 {
+		return
+	}
+	m.ensureDownloadMaps()
+	m.groupPlaylists[groupID] = append([]string(nil), names...)
+}
+
+func (m *Model) jobDestinationNames(job download.Job) []string {
+	if job.GroupID > 0 {
+		return m.groupPlaylists[job.GroupID]
+	}
+	return m.jobPlaylists[job.ID]
+}
+
+func (m *Model) downloadStatusText(job download.Job) string {
+	status := job.Status.String()
+	if !job.Status.Terminal() && job.Progress >= 0 {
+		status = fmt.Sprintf("%s %d%%", status, int(job.Progress*100))
+	}
+	if job.GroupID == 0 {
+		if dest := m.shortDestinationLabel(m.jobDestinationNames(job), 18); dest != "" {
+			status += " " + currentGlyphs.Right + " " + dest
+		}
+	}
+	return status
+}
+
+func removeFold(names []string, target string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if !strings.EqualFold(name, target) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func replaceFold(names []string, oldName, newName string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.EqualFold(name, oldName) {
+			name = newName
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func (m *Model) dropDownloadDestination(name string) {
+	if name == "" {
+		return
+	}
+	m.downloadPlaylists = removeFold(m.downloadPlaylists, name)
+	for id, names := range m.jobPlaylists {
+		cleaned := removeFold(names, name)
+		if len(cleaned) == 0 {
+			delete(m.jobPlaylists, id)
+			continue
+		}
+		m.jobPlaylists[id] = cleaned
+	}
+	for id, names := range m.groupPlaylists {
+		cleaned := removeFold(names, name)
+		if len(cleaned) == 0 {
+			delete(m.groupPlaylists, id)
+			continue
+		}
+		m.groupPlaylists[id] = cleaned
+	}
+}
+
+func (m *Model) renameDownloadDestination(oldName, newName string) {
+	if oldName == "" || newName == "" {
+		return
+	}
+	m.downloadPlaylists = replaceFold(m.downloadPlaylists, oldName, newName)
+	for id, names := range m.jobPlaylists {
+		m.jobPlaylists[id] = replaceFold(names, oldName, newName)
+	}
+	for id, names := range m.groupPlaylists {
+		m.groupPlaylists[id] = replaceFold(names, oldName, newName)
+	}
+}
+
+func (m *Model) shortDestinationLabel(names []string, maxWidth int) string {
+	if len(names) == 0 {
+		return ""
+	}
+	label := cleanText(names[0])
+	if len(names) > 1 {
+		label += fmt.Sprintf(" +%d", len(names)-1)
+	}
+	return truncateText(label, maxWidth)
+}
+
+func (m *Model) destinationLabel(names []string, maxWidth int) string {
+	if len(names) == 0 {
+		return ""
+	}
+	cleaned := make([]string, 0, len(names))
+	for _, name := range names {
+		cleaned = append(cleaned, cleanText(name))
+	}
+	return truncateText(strings.Join(cleaned, ", "), maxWidth)
+}
+
 func (m *Model) openHelp() {
 	m.modal = modalHelp
 	m.modalCursor = 0
@@ -2293,6 +2523,7 @@ func (m *Model) enqueueSearchResult() tea.Cmd {
 			return m.linkInput.Focus()
 		}
 		m.jobSeen[job.ID] = job.Status
+		m.assignJobDestination(job.ID, m.downloadPlaylists)
 		m.setToast("Downloading: "+cleanText(result.Title), toastSuccess, 3*time.Second)
 	} else {
 		groupTitle := "Search: " + cleanText(m.linkQuery)
@@ -2303,6 +2534,7 @@ func (m *Model) enqueueSearchResult() tea.Cmd {
 		}
 		m.setToast(fmt.Sprintf("Queued %d tracks", batch.Queued), toastSuccess, 3*time.Second)
 		groupID = batch.GroupID
+		m.assignGroupDestination(groupID, m.downloadPlaylists)
 	}
 	m.modal = modalDownloads
 	m.linkResults = nil
@@ -2455,8 +2687,8 @@ func (m *Model) searchResultRows(contentH int) int {
 	if m.auditionStatus() != "" && len(m.linkResults) > 0 {
 		extra = 1
 	}
-	if visible > 0 && contentH-10-extra < visible {
-		visible = maxInt(1, contentH-10-extra)
+	if visible > 0 && contentH-11-extra < visible {
+		visible = maxInt(1, contentH-11-extra)
 	}
 	return visible
 }
@@ -2536,6 +2768,7 @@ func (m *Model) handlePreviewLoaded(msg previewLoadedMsg) tea.Cmd {
 		return m.linkInput.Focus()
 	}
 	m.jobSeen[job.ID] = job.Status
+	m.assignJobDestination(job.ID, m.downloadPlaylists)
 	m.linkInput.Blur()
 	m.modal = modalDownloads
 	m.modalErr = ""
@@ -2557,6 +2790,7 @@ func (m *Model) confirmPreview() tea.Cmd {
 	m.linkInput.Blur()
 	m.modal = modalDownloads
 	m.modalErr = ""
+	m.assignGroupDestination(result.GroupID, m.downloadPlaylists)
 	m.refreshJobs()
 	m.downloadsCur = maxInt(0, len(m.jobs)-1)
 	for i, job := range m.jobs {
@@ -2609,6 +2843,7 @@ func (m *Model) submitPlaylistRename() tea.Cmd {
 		m.modalErr = err.Error()
 		return nil
 	}
+	m.renameDownloadDestination(oldName, renamed.Name)
 	wasActive := strings.EqualFold(m.view, oldName)
 	m.nameInput.Blur()
 	m.closeModal()
@@ -2851,21 +3086,42 @@ func (m *Model) handleArtLoaded(msg artLoadedMsg) {
 }
 
 func (m *Model) pollDownloads() tea.Cmd {
-	jobs := m.mgr.Jobs()
+	return tea.Batch(m.processDownloadJobs(m.mgr.Jobs())...)
+}
+
+func (m *Model) processDownloadJobs(jobs []download.Job) []tea.Cmd {
+	m.ensureDownloadMaps()
 	newSeen := make(map[int]download.Status, len(jobs))
 	var cmds []tea.Cmd
 	for _, j := range jobs {
 		newSeen[j.ID] = j.Status
 		prev, seen := m.jobSeen[j.ID]
 		if !seen {
-			continue
+			// Batch jobs may finish before the first poll. Treat an unseen
+			// terminal job as queued so its completion is not lost.
+			if !j.Status.Terminal() {
+				continue
+			}
+			prev = download.StatusQueued
 		}
 		if prev == j.Status {
 			continue
 		}
+
 		if j.GroupID > 0 {
-			if m.groupNotified[j.GroupID] {
+			if m.groupFlushed[j.GroupID] {
+				if j.Status == download.StatusDone && j.Path != "" && !m.jobAdded[j.ID] {
+					saved, failed := m.addPathsToPlaylists([]string{j.Path}, m.groupPlaylists[j.GroupID])
+					m.jobAdded[j.ID] = true
+					m.notifyDownloadDone(j, saved, failed)
+					if cmd := m.startRefresh(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
 				continue
+			}
+			if j.Status == download.StatusDone {
+				m.addGroupDone(j)
 			}
 			total, terminal, failed, canceled := 0, 0, 0, 0
 			for _, groupJob := range jobs {
@@ -2882,35 +3138,53 @@ func (m *Model) pollDownloads() tea.Cmd {
 				case download.StatusCanceled:
 					canceled++
 				}
+				if groupJob.Status == download.StatusDone {
+					m.addGroupDone(groupJob)
+				}
 			}
 			if total == 0 || terminal != total {
 				continue
 			}
-			m.groupNotified[j.GroupID] = true
+			m.groupFlushed[j.GroupID] = true
+			savedCount, saved, failedSaves := m.flushGroup(j.GroupID)
 			title := truncateText(cleanText(j.GroupTitle), 80)
+			message := ""
+			kind := toastSuccess
 			switch {
 			case failed > 0:
-				m.setToast(fmt.Sprintf("%d of %d failed: %s", failed, total, title), toastWarning, 6*time.Second)
+				message = fmt.Sprintf("%d of %d failed: %s", failed, total, title)
+				kind = toastWarning
 			case canceled > 0:
-				m.setToast(fmt.Sprintf("Playlist stopped: %d of %d canceled", canceled, total), toastInfo, 5*time.Second)
+				message = fmt.Sprintf("Playlist stopped: %d of %d canceled", canceled, total)
+				kind = toastInfo
 			default:
-				m.setToast(fmt.Sprintf("Playlist downloaded: %s (%d tracks)", title, total), toastSuccess, 5*time.Second)
+				message = fmt.Sprintf("Playlist downloaded: %s (%d tracks)", title, total)
 			}
-			cmds = append(cmds, m.startRefresh())
+			if savedCount > 0 && len(saved) > 0 {
+				message += " " + currentGlyphs.Right + " " + m.destinationLabel(saved, 40)
+			}
+			if len(failedSaves) > 0 {
+				message += " (" + currentGlyphs.Warning + " could not save to " + m.destinationLabel(failedSaves, 30) + ")"
+				kind = toastWarning
+			}
+			m.setToast(message, kind, 6*time.Second)
+			if cmd := m.startRefresh(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			continue
 		}
+
 		switch j.Status {
 		case download.StatusDone:
-			title := j.Title
-			if title == "" {
-				title = j.URL
+			saved, failed := []string(nil), []string(nil)
+			if j.Path != "" && !m.jobAdded[j.ID] {
+				saved, failed = m.addPathsToPlaylists([]string{j.Path}, m.jobPlaylists[j.ID])
+				m.jobAdded[j.ID] = true
 			}
-			if j.Warning != "" {
-				m.setToast("Downloaded with warnings: "+title, toastWarning, 4*time.Second)
-			} else {
-				m.setToast("Downloaded: "+title, toastSuccess, 4*time.Second)
+			m.notifyDownloadDone(j, saved, failed)
+			if cmd := m.startRefresh(); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
-			cmds = append(cmds, m.startRefresh())
 		case download.StatusFailed:
 			msg := j.Err
 			if msg == "" {
@@ -2923,6 +3197,7 @@ func (m *Model) pollDownloads() tea.Cmd {
 	}
 	m.jobSeen = newSeen
 	m.jobs = jobs
+	m.pruneDownloadState()
 	if len(m.jobs) == 0 {
 		m.downloadsCur = 0
 	} else if m.downloadsCur >= len(m.jobs) {
@@ -2931,7 +3206,127 @@ func (m *Model) pollDownloads() tea.Cmd {
 	if m.downloadsCur < 0 {
 		m.downloadsCur = 0
 	}
-	return tea.Batch(cmds...)
+	return cmds
+}
+
+func (m *Model) notifyDownloadDone(j download.Job, saved, failed []string) {
+	title := j.Title
+	if title == "" {
+		title = j.URL
+	}
+	message := "Downloaded: " + title
+	if j.Warning != "" {
+		message = "Downloaded with warnings: " + title
+	}
+	if len(saved) > 0 {
+		message += " " + currentGlyphs.Right + " " + m.destinationLabel(saved, 40)
+	}
+	if len(failed) > 0 {
+		message += " (" + currentGlyphs.Warning + " could not save to " + m.destinationLabel(failed, 30) + ")"
+	}
+	kind := toastSuccess
+	if j.Warning != "" || len(failed) > 0 {
+		kind = toastWarning
+	}
+	m.setToast(message, kind, 5*time.Second)
+}
+
+func (m *Model) addGroupDone(j download.Job) {
+	if j.GroupID <= 0 || j.Path == "" {
+		return
+	}
+	for _, item := range m.groupDone[j.GroupID] {
+		if item.jobID == j.ID {
+			return
+		}
+	}
+	m.groupDone[j.GroupID] = append(m.groupDone[j.GroupID], savedTrack{
+		jobID:       j.ID,
+		path:        j.Path,
+		trackNumber: j.TrackNumber,
+	})
+}
+
+func (m *Model) flushGroup(groupID int) (int, []string, []string) {
+	entries := append([]savedTrack(nil), m.groupDone[groupID]...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].trackNumber != entries[j].trackNumber {
+			return entries[i].trackNumber < entries[j].trackNumber
+		}
+		return entries[i].jobID < entries[j].jobID
+	})
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.path)
+		m.jobAdded[entry.jobID] = true
+	}
+	saved, failed := m.addPathsToPlaylists(paths, m.groupPlaylists[groupID])
+	delete(m.groupDone, groupID)
+	return len(paths), saved, failed
+}
+
+func (m *Model) addPathsToPlaylists(paths, destinations []string) (saved, failed []string) {
+	if len(paths) == 0 || len(destinations) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(destinations))
+	for _, name := range destinations {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, _, err := m.playlists.AddMany(name, paths); err != nil {
+			failed = append(failed, name)
+			if strings.Contains(strings.ToLower(err.Error()), "not found") {
+				m.dropDownloadDestination(name)
+			}
+			continue
+		}
+		saved = append(saved, name)
+	}
+	return saved, failed
+}
+
+func (m *Model) pruneDownloadState() {
+	present := make(map[int]bool, len(m.jobs))
+	groups := make(map[int]bool)
+	for _, job := range m.jobs {
+		present[job.ID] = true
+		if job.GroupID > 0 {
+			groups[job.GroupID] = true
+		}
+	}
+	for id := range m.jobPlaylists {
+		if !present[id] {
+			delete(m.jobPlaylists, id)
+		}
+	}
+	for id := range m.jobSeen {
+		if !present[id] {
+			delete(m.jobSeen, id)
+		}
+	}
+	for id := range m.jobAdded {
+		if !present[id] {
+			delete(m.jobAdded, id)
+		}
+	}
+	for id := range m.groupPlaylists {
+		if !groups[id] {
+			delete(m.groupPlaylists, id)
+		}
+	}
+	for id := range m.groupDone {
+		if !groups[id] {
+			delete(m.groupDone, id)
+		}
+	}
+	for id := range m.groupFlushed {
+		if !groups[id] {
+			delete(m.groupFlushed, id)
+		}
+	}
 }
 
 func (m *Model) handleTick() tea.Cmd {
