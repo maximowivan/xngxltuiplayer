@@ -360,6 +360,26 @@ func TestCoverVolumeSliderClick(t *testing.T) {
 	}
 }
 
+func TestCoverVolumeSliderCentered(t *testing.T) {
+	m, cleanup := testModel(t)
+	defer cleanup()
+	m.coverMode = true
+	m.width, m.height = 180, 45
+	layout := m.coverLayout(180, 45)
+	if !layout.grid {
+		t.Fatal("180x45 should use the grid")
+	}
+	hero := m.coverHeroComposition(layout.cover)
+	line := ansi.Strip(m.coverVolumeLine(hero.info.width))
+	lead := len(line) - len(strings.TrimLeft(line, " "))
+	if lead == 0 {
+		t.Fatalf("volume slider is not centred in an info column of %d cols: %q", hero.info.width, line)
+	}
+	if strings.TrimSpace(line) == "" {
+		t.Fatal("volume slider line is empty")
+	}
+}
+
 func TestCoverGridSpectrumBarCount(t *testing.T) {
 	m, cleanup := testModel(t)
 	defer cleanup()

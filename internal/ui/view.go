@@ -1228,9 +1228,16 @@ func (m *Model) coverControlsLine(width int) coverControlLayout {
 }
 
 // coverVolumeLine renders the volume slider as its own row under the
-// transport so it can stay wide and mouse-friendly in the hero block.
+// transport, centred inside the info column so it does not hang off the left
+// edge on wide windows.
 func (m *Model) coverVolumeLine(width int) string {
 	group, _, _ := m.volumeGroup(width)
+	if group == "" {
+		return ""
+	}
+	if w := ansi.StringWidth(group); w < width {
+		group = strings.Repeat(" ", (width-w)/2) + group
+	}
 	return fitLine(group, width)
 }
 
@@ -1876,15 +1883,13 @@ func (m *Model) coverVolumeBarBounds(width int) (start, end int) {
 	if innerW < 17 {
 		return -1, -1
 	}
-	barW := innerW - 11
-	if barW > 30 {
-		barW = 30
-	}
-	if barW < 6 {
+	group, barStart, barEnd := m.volumeGroup(innerW)
+	if group == "" || barStart < 0 || barEnd <= barStart {
 		return -1, -1
 	}
-	start = contentX + 5
-	return start, start + barW
+	pad := maxInt(0, (innerW-ansi.StringWidth(group))/2)
+	start = contentX + pad + barStart
+	return start, contentX + pad + barEnd
 }
 
 const volumeSteps = 7
