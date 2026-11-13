@@ -497,9 +497,9 @@ func coverHeroPanes(pane coverPane) (art, info coverPane, spectrumRows int) {
 		return coverPane{}, coverPane{}, 0
 	}
 	// Split the panel between the hero block and the spectrum. The hero grows
-	// with the window but stops at 24 rows so the cover never dwarfs the text
+	// with the window but stops at 22 rows so the cover never dwarfs the text
 	// block; the rest goes to the spectrum.
-	heroRows := minInt(24, maxInt(12, innerH*65/100))
+	heroRows := minInt(22, maxInt(12, innerH*60/100))
 	spectrumRows = innerH - heroRows
 	if spectrumRows < 6 {
 		spectrumRows = 6
@@ -574,29 +574,32 @@ func (m *Model) coverHeroComposition(pane coverPane) coverHeroComposition {
 	}
 	artTop := art.top - (pane.top + 1)
 	meta := m.coverInfoLines(info.width)
-	const transportH = 3
-	gap := 1
-	total := len(meta) + gap + transportH
-	if total > art.height {
+	const transportH = 4
+	if len(meta)+1+transportH > art.height {
 		meta = dropCoverInfoBlanks(meta)
-		gap = 0
-		total = len(meta) + transportH
 	}
-	if total > art.height {
+	if len(meta)+transportH > art.height {
 		keep := maxInt(1, art.height-transportH)
 		if keep > len(meta) {
 			keep = len(meta)
 		}
 		meta = meta[:keep]
-		total = len(meta) + transportH
 	}
-	// Keep metadata and transport together as one block so there is no large
-	// dead gap between the album line and the sliders.
-	top := artTop + maxInt(0, (art.height-total)/2)
-	out.metaTop = top
-	out.progressTop = top + len(meta) + gap
-	out.controlsTop = out.progressTop + 1
-	out.volumeTop = out.controlsTop + 1
+	// Anchor the volume row to the bottom edge of the artwork. The controls and
+	// progress sit just above it, with a blank row between controls and volume.
+	if art.height >= len(meta)+transportH+1 {
+		out.volumeTop = artTop + art.height - 1
+		out.controlsTop = out.volumeTop - 2
+		out.progressTop = out.controlsTop - 1
+		metaArea := out.progressTop - artTop
+		out.metaTop = artTop + maxInt(0, (metaArea-len(meta))/2)
+	} else {
+		top := artTop + maxInt(0, (art.height-len(meta)-transportH)/2)
+		out.metaTop = top
+		out.progressTop = top + len(meta) + 1
+		out.controlsTop = out.progressTop + 1
+		out.volumeTop = out.controlsTop + 2
+	}
 	out.metaLines = meta
 	return out
 }
@@ -892,46 +895,10 @@ func (m *Model) coverInfoLines(width int) []string {
 	if len(details) > 0 {
 		lines = append(lines, faintStyle.Render(truncateText(strings.Join(details, currentGlyphs.Separator), width)))
 	}
-	if tech := m.coverTechText(); tech != "" {
-		lines = append(lines, "")
-		lines = append(lines, dimStyle.Render(truncateText(tech, width)))
-	}
-	if added := m.coverAddedText(); added != "" {
-		lines = append(lines, faintStyle.Render(truncateText(added, width)))
-	}
 	if m.artLoading {
 		lines = append(lines, dimStyle.Render(truncateText("loading cover"+currentGlyphs.Ellipsis, width)))
 	}
 	return lines
-}
-
-// coverTechText summarises the current file: duration, size and an approximate
-// bitrate. The estimate includes tags and artwork, so it is prefixed with "~".
-func (m *Model) coverTechText() string {
-	if m.current == nil {
-		return ""
-	}
-	parts := make([]string, 0, 3)
-	if m.current.Duration > 0 {
-		parts = append(parts, model.FormatDuration(m.current.Duration))
-	}
-	if m.current.Size > 0 {
-		parts = append(parts, humanSize(m.current.Size))
-		if m.current.Duration > 0 {
-			kbps := int(float64(m.current.Size)*8/m.current.Duration.Seconds()/1000 + 0.5)
-			if kbps > 0 {
-				parts = append(parts, fmt.Sprintf("~%d kbps", kbps))
-			}
-		}
-	}
-	return strings.Join(parts, currentGlyphs.Separator)
-}
-
-func (m *Model) coverAddedText() string {
-	if m.current == nil || m.current.Added.IsZero() {
-		return ""
-	}
-	return "Added " + m.current.Added.Format("2006-01-02")
 }
 
 func (m *Model) coverUpNextLimit(pane coverPane) int {
