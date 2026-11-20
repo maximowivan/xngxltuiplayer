@@ -17,7 +17,7 @@ require (
 	github.com/gopxl/beep/v2 v2.1.1
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/image v0.47.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
