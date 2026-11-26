@@ -679,7 +679,7 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 		{"enter", "play / open view"},
 		{"tab", "switch pane"},
 		{"/", "search library"},
-		{"esc", "clear search"},
+		{"esc", "clear search / filter"},
 		{"space", "pause / resume"},
 		{"n / p", "next / previous"},
 		{currentGlyphs.LeftRightWords, "seek 5 seconds"},
@@ -702,6 +702,7 @@ func (m *Model) renderHelpModal(w, contentH int) string {
 	}
 	library := []keyBinding{
 		{"a", "search or add music"},
+		{"A", "filter by artist / album"},
 		{"P", "new playlist"},
 		{"I", "import M3U"},
 		{"E", "export M3U"},

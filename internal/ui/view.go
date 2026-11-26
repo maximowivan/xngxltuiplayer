@@ -52,7 +52,7 @@ func (m *Model) renderHeader(w int) string {
 
 	right := dimStyle.Render(m.viewLabel()) + faintStyle.Render(currentGlyphs.Separator) +
 		dimStyle.Render(fmt.Sprintf("%d tracks", len(m.visible)))
-	if m.search != "" {
+	if m.search != "" || m.filterKind != "" {
 		right += faintStyle.Render(currentGlyphs.Separator) + accent2Style.Render("filtered")
 	}
 	if active := m.mgr.ActiveCount(); active > 0 {
@@ -108,6 +108,23 @@ func (m *Model) renderContent(w, height int) string {
 		panes = append(panes, m.renderRightPane(rightW, height))
 	}
 	return joinHorizontal(panes)
+}
+
+// sidebarPaneColors highlights the library pane when it owns the keyboard
+// focus, so Tab is visible at a glance.
+func (m *Model) sidebarPaneColors() (border, title lipgloss.Color) {
+	if m.focus == focusSidebar {
+		return colAccent, colAccent
+	}
+	return colFaint, colDim
+}
+
+// tracksPaneColors is the same for the track list pane.
+func (m *Model) tracksPaneColors() (border, title lipgloss.Color) {
+	if m.focus == focusTracks {
+		return colAccent, colAccent
+	}
+	return colFaint, colDim
 }
 
 func joinHorizontal(panes []string) string {
@@ -183,7 +200,8 @@ func (m *Model) renderSidebar(width, height int) string {
 	for len(lines) < innerH {
 		lines = append(lines, "")
 	}
-	return renderBox("Library", lines, width, height, colFaint, colDim)
+	borderColor, titleColor := m.sidebarPaneColors()
+	return renderBox("Library", lines, width, height, borderColor, titleColor)
 }
 
 func sidebarRow(label, count string, active, selected, drop bool, width int) string {
@@ -234,7 +252,7 @@ func (m *Model) renderCenter(width, height int) string {
 	}
 
 	footerLeft := fmt.Sprintf("%d tracks", len(m.visible))
-	if m.search != "" {
+	if m.search != "" || m.filterKind != "" {
 		footerLeft = fmt.Sprintf("%d of %d tracks", len(m.visible), len(m.baseTracks()))
 	}
 	footerRight := ""
@@ -249,10 +267,14 @@ func (m *Model) renderCenter(width, height int) string {
 	lines = append(lines, dimStyle.Render(padBetween("  "+footerLeft, footerRight+"  ", innerW)))
 
 	title := m.viewLabel()
+	if label := m.filterLabel(); label != "" {
+		title += currentGlyphs.Separator + truncateText(cleanText(label), 30)
+	}
 	if m.search != "" {
 		title += currentGlyphs.Separator + "/" + truncateText(cleanText(m.search), 24)
 	}
-	return renderBox(title, lines, width, height, colFaint, colAccent)
+	borderColor, titleColor := m.tracksPaneColors()
+	return renderBox(title, lines, width, height, borderColor, titleColor)
 }
 
 func (m *Model) renderTrackRows(width, rows int) []string {
@@ -264,6 +286,11 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 			message = []string{
 				"No tracks match " + truncateText("\""+cleanText(m.search)+"\"", maxInt(10, width-16)),
 				"Press esc to clear the search.",
+			}
+		case m.filterKind != "":
+			message = []string{
+				"No tracks with this " + m.filterKind + ".",
+				"Press A to cycle the filter" + currentGlyphs.Separator + "esc to clear it.",
 			}
 		case m.view == viewFavorites:
 			message = []string{
@@ -322,10 +349,14 @@ func (m *Model) renderTrackRows(width, rows int) []string {
 				marker = iconPause
 			}
 		}
-		prefix := cursor + marker
+		fav := " "
+		if m.stats != nil && m.stats.IsFavorite(t.Path) {
+			fav = iconFavorite
+		}
+		prefix := cursor + marker + fav
 
 		dur := model.FormatDuration(t.Duration)
-		avail := width - 2 - 1 - ansi.StringWidth(dur)
+		avail := width - 5 - ansi.StringWidth(dur)
 		text := cleanText(t.DisplayTitle())
 		if artist := cleanText(t.DisplayArtist()); artist != "" && avail > ansi.StringWidth(text)+4 {
 			text += currentGlyphs.Separator + artist

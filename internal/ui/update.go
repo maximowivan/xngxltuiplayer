@@ -128,6 +128,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "a":
 		return m, m.openAddLink()
+	case "A":
+		m.cycleTrackFilter()
+		return m, nil
 	case "P":
 		return m, m.openNewPlaylist()
 	case "I":
@@ -312,6 +315,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchInput.SetValue("")
 			m.rebuildVisible("")
 			m.setToast("Search cleared", toastInfo, 1200*time.Millisecond)
+		} else if m.clearTrackFilter() {
+			m.setToast("Filter cleared", toastInfo, 1200*time.Millisecond)
 		} else if m.toast != "" {
 			m.toast = ""
 		}

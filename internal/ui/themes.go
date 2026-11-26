@@ -206,6 +206,14 @@ var themePalettes = []themePalette{
 		Red: "#CF222E", Blue: "#0969DA",
 		SelBg: "#EAEEF2", SelFg: "#24292F", Bg: "#FFFFFF",
 	},
+	{
+		Name: "terminal", Label: "Terminal Green",
+		Text: "#73FF00", Dim: "#3F8C00", Faint: "#2A5F00",
+		Accent: "#B6FF3D", Accent2: "#33E6C0",
+		Pink: "#FF7AD9", Green: "#5AF700", Yellow: "#FFC400",
+		Red: "#FF4B33", Blue: "#33C6FF",
+		SelBg: "#0A2A00", SelFg: "#C8FF8C", Bg: "#000000",
+	},
 }
 
 const defaultTheme = "catppuccin"

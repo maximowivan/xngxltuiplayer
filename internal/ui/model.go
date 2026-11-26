@@ -197,6 +197,9 @@ type Model struct {
 	searchInput textinput.Model
 	searching   bool
 
+	filterKind  string
+	filterValue string
+
 	modal           modalKind
 	linkInput       textinput.Model
 	linkSource      download.SearchSource
@@ -691,7 +694,7 @@ func (m *Model) rebuildVisible(preservePath string) {
 		}
 	}
 
-	base := m.baseTracks()
+	base := m.browseBase()
 	q := strings.ToLower(strings.TrimSpace(m.search))
 	if q == "" {
 		m.visible = append([]model.Track(nil), base...)
